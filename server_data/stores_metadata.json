@@ -1,0 +1,32 @@
+[
+  {
+    "id": "store_1",
+    "name": "Store 1",
+    "active": true,
+    "lastUploadedAt": "2026-09-04T08:16:48.896Z",
+    "lastFileName": "new_stock_update.xlsx",
+    "productCount": 10458,
+    "stockVersion": 1788509810068,
+    "syncStatus": "synced"
+  },
+  {
+    "id": "store_2",
+    "name": "Store 2",
+    "active": false,
+    "lastUploadedAt": null,
+    "lastFileName": null,
+    "productCount": 0,
+    "stockVersion": 0,
+    "syncStatus": "idle"
+  },
+  {
+    "id": "store_3",
+    "name": "Store 3",
+    "active": false,
+    "lastUploadedAt": null,
+    "lastFileName": null,
+    "productCount": 0,
+    "stockVersion": 0,
+    "syncStatus": "idle"
+  }
+]

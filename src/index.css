@@ -1,0 +1,495 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --background: #f8fafc;
+    --foreground: #0f172a;
+    --card: #ffffff;
+    --card-foreground: #1e293b;
+    --border: #e2e8f0;
+    --primary: #4f46e5;
+    --primary-hover: #4338ca;
+    --secondary: #f1f5f9;
+    --secondary-hover: #e2e8f0;
+    --muted: #64748b;
+    --muted-foreground: #94a3b8;
+  }
+
+  .dark {
+    --background: #0b0f19;
+    --foreground: #f8fafc;
+    --card: #131927;
+    --card-foreground: #f1f5f9;
+    --border: #1e293b;
+    --primary: #4f46e5;
+    --primary-hover: #6366f1;
+    --secondary: #1a2234;
+    --secondary-hover: #243048;
+    --muted: #94a3b8;
+    --muted-foreground: #cbd5e1;
+  }
+}
+
+body {
+  background-color: var(--background) !important;
+  color: var(--foreground) !important;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+  letter-spacing: -0.011em;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Typography polish */
+h1, .h1 {
+  font-size: 1.5rem !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.025em !important;
+  color: var(--foreground) !important;
+}
+
+h2, .h2 {
+  font-size: 1.25rem !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.02em !important;
+}
+
+h3, .h3 {
+  font-size: 1.1rem !important;
+  font-weight: 500 !important;
+  letter-spacing: -0.015em !important;
+}
+
+/* Light mode Card standardization */
+.bg-white {
+  background-color: var(--card) !important;
+  border-color: var(--border) !important;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05) !important;
+}
+
+/* Dark mode Card & Surface Standardization */
+.dark .bg-slate-900,
+.dark .bg-slate-850,
+.dark .bg-slate-800 {
+  background-color: var(--card) !important;
+  border-color: var(--border) !important;
+}
+
+.dark .bg-slate-950 {
+  background-color: var(--background) !important;
+  border-color: var(--border) !important;
+}
+
+/* Layout Page Surface override */
+.bg-slate-100 {
+  background-color: var(--background) !important;
+}
+
+/* Standardize Borders */
+.border,
+.border-slate-200,
+.border-slate-100 {
+  border-color: var(--border) !important;
+}
+
+.dark .border-slate-800,
+.dark .border-slate-700 {
+  border-color: var(--border) !important;
+}
+
+/* Dark Mode Text Contrast Hardening */
+.dark h1,
+.dark h2,
+.dark h3,
+.dark h4,
+.dark .text-slate-900,
+.dark .text-slate-950 {
+  color: #ffffff !important;
+}
+
+.dark .text-slate-800 {
+  color: #f1f5f9 !important;
+}
+
+.dark .text-slate-700 {
+  color: #e2e8f0 !important;
+}
+
+.dark .text-slate-600 {
+  color: #cbd5e1 !important;
+}
+
+.dark .text-slate-500,
+.dark .text-slate-400 {
+  color: #94a3b8 !important;
+}
+
+/* Button & Accent Standardization */
+.bg-indigo-600 {
+  background-color: var(--primary) !important;
+  color: #ffffff !important;
+  font-weight: 500 !important;
+  transition: all 0.15s ease-in-out !important;
+}
+
+.bg-indigo-600:hover {
+  background-color: var(--primary-hover) !important;
+}
+
+.text-indigo-600 {
+  color: var(--primary) !important;
+}
+
+.dark .text-indigo-400 {
+  color: #818cf8 !important;
+}
+
+/* Secondary Button standardization */
+.bg-slate-50,
+.bg-slate-100 {
+  background-color: var(--secondary) !important;
+}
+
+/* Badge normalization */
+.bg-indigo-100 {
+  background-color: rgba(79, 70, 229, 0.1) !important;
+  color: var(--primary) !important;
+  border-color: rgba(79, 70, 229, 0.2) !important;
+}
+
+.dark .bg-indigo-950,
+.dark .bg-indigo-950\/80,
+.dark .bg-indigo-950\/60,
+.dark .bg-indigo-950\/30 {
+  background-color: rgba(79, 70, 229, 0.18) !important;
+  color: #a5b4fc !important;
+  border-color: rgba(99, 102, 241, 0.35) !important;
+}
+
+/* Out of Stock, Low Stock status badging */
+.bg-rose-100 {
+  background-color: rgba(239, 68, 68, 0.1) !important;
+  color: #dc2626 !important;
+  border-color: rgba(239, 68, 68, 0.2) !important;
+}
+.dark .bg-rose-950,
+.dark .bg-rose-950\/80,
+.dark .bg-rose-950\/60 {
+  background-color: rgba(239, 68, 68, 0.2) !important;
+  color: #fca5a5 !important;
+  border-color: rgba(239, 68, 68, 0.35) !important;
+}
+
+.bg-amber-100 {
+  background-color: rgba(245, 158, 11, 0.1) !important;
+  color: #d97706 !important;
+  border-color: rgba(245, 158, 11, 0.2) !important;
+}
+.dark .bg-amber-950,
+.dark .bg-amber-950\/80,
+.dark .bg-amber-950\/60 {
+  background-color: rgba(245, 158, 11, 0.2) !important;
+  color: #fde047 !important;
+  border-color: rgba(245, 158, 11, 0.35) !important;
+}
+
+.bg-emerald-100 {
+  background-color: rgba(16, 185, 129, 0.1) !important;
+  color: #059669 !important;
+  border-color: rgba(16, 185, 129, 0.2) !important;
+}
+.dark .bg-emerald-950,
+.dark .bg-emerald-950\/80,
+.dark .bg-emerald-950\/60 {
+  background-color: rgba(16, 185, 129, 0.2) !important;
+  color: #6ee7b7 !important;
+  border-color: rgba(16, 185, 129, 0.35) !important;
+}
+
+/* Border radius standardization */
+.rounded-3xl {
+  border-radius: 14px !important;
+}
+.rounded-2xl {
+  border-radius: 12px !important;
+}
+.rounded-xl {
+  border-radius: 10px !important;
+}
+.rounded-lg {
+  border-radius: 8px !important;
+}
+
+/* Safe area padding utilities for mobile edge-to-edge viewports */
+.pb-safe {
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), 16px);
+}
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* Mobile smooth touch scrolling & prevent horizontal scroll leakage */
+html, body {
+  overflow-x: hidden;
+  max-width: 100vw;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.25);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.45);
+}
+
+/* Subtle, professional UI transitions */
+
+/* 1. Page & Tab Transitions (gentle fade-in with 6px movement, 180-200ms) */
+@keyframes uiGentleFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in,
+.page-enter,
+.tab-panel-enter {
+  animation: uiGentleFadeIn 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: opacity, transform;
+}
+
+/* 2. Popups & Modals (Backdrop fade & Panel scale 0.98 -> 1, around 180ms) */
+@keyframes modalBackdropIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modalBackdropOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes modalPanelIn {
+  from {
+    opacity: 0;
+    transform: scale(0.98) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes modalPanelOut {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.98) translateY(4px);
+  }
+}
+
+.modal-backdrop-in {
+  animation: modalBackdropIn 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.modal-backdrop-out {
+  animation: modalBackdropOut 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  pointer-events: none;
+}
+
+.modal-panel-in {
+  animation: modalPanelIn 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: opacity, transform;
+}
+
+.modal-panel-out {
+  animation: modalPanelOut 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: opacity, transform;
+  pointer-events: none;
+}
+
+/* 3. Mobile Bottom Sheets (slide up/down 170-190ms) */
+@keyframes sheetSlideUp {
+  from {
+    opacity: 0.8;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes sheetSlideDown {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+}
+
+.sheet-panel-in {
+  animation: sheetSlideUp 190ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: transform, opacity;
+}
+
+.sheet-panel-out {
+  animation: sheetSlideDown 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: transform, opacity;
+  pointer-events: none;
+}
+
+@media (max-width: 639px) {
+  .modal-panel-in.mobile-bottom-sheet {
+    animation: sheetSlideUp 190ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .modal-panel-out.mobile-bottom-sheet {
+    animation: sheetSlideDown 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+}
+
+/* 4. Button & Tab Indicator Subtle Feedback (120-150ms) */
+button,
+[role="button"],
+.btn-feedback,
+.tab-feedback,
+nav a,
+nav button {
+  transition-property: color, background-color, border-color, opacity, box-shadow, transform;
+  transition-duration: 130ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+button:active:not(:disabled),
+[role="button"]:active:not(:disabled) {
+  transform: scale(0.985);
+}
+
+/* Input transitions: only border & shadow, no layout scale */
+input, textarea, select {
+  transition: border-color 130ms ease, box-shadow 130ms ease;
+}
+
+/* 5. Accessibility: Respect prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Scanner matched pulse animation */
+@keyframes scannerPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+    border-color: #10b981 !important;
+    background-color: rgba(16, 185, 129, 0.15) !important;
+    transform: scale(1.015);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgba(16, 185, 129, 0);
+    border-color: #10b981 !important;
+    background-color: rgba(16, 185, 129, 0.25) !important;
+    transform: scale(1.015);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+    transform: scale(1);
+  }
+}
+
+.scanner-matched-pulse {
+  animation: scannerPulse 0.8s ease-in-out 3;
+  z-index: 20 !important;
+  position: relative;
+}
+
+@media print {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* Hide app navigation chrome when printing */
+  header,
+  nav,
+  aside,
+  #search-container,
+  .no-print,
+  button {
+    display: none !important;
+  }
+
+  /* When printing Barcode Sticker */
+  #printable-barcode-sticker {
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 320px !important;
+    margin: 0 auto !important;
+    padding: 10px !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* When printing Report Table */
+  #printable-report-area {
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  #printable-report-area table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+  }
+
+  #printable-report-area th,
+  #printable-report-area td {
+    border: 1px solid #cbd5e1 !important;
+    padding: 4px 6px !important;
+    color: #000000 !important;
+  }
+}

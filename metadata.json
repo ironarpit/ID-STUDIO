@@ -1,0 +1,10 @@
+{
+  "name": "ID STUDIO 3",
+  "description": "Greer Genius",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
