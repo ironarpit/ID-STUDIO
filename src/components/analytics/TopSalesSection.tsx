@@ -4,6 +4,7 @@ import { Product, ComputedProductAnalytics, AnalyticsViewType, AuditType } from 
 import { getProductBrand } from '../../utils/analytics';
 import { getUniqueMainCodes, matchesMainCodeFilter, deriveCategoriesFromProducts, matchesCategoryFilter, getValidSelectedCategories } from '../../utils/mainCode';
 import { MultiSelectDropdown } from '../MultiSelectDropdown';
+import { computeLinkedClassificationOptions } from '../../utils/linkedFilters';
 
 interface TopSalesSectionProps {
   products: Product[];
@@ -28,22 +29,24 @@ export const TopSalesSection: React.FC<TopSalesSectionProps> = ({
   const [selectedMainCodes, setSelectedMainCodes] = useState<string[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
 
-  // Unique options
-  const mainCodesList = useMemo(() => getUniqueMainCodes(products), [products]);
-
-  const categoriesList = useMemo(() => {
-    return deriveCategoriesFromProducts(products, selectedMainCodes);
-  }, [products, selectedMainCodes]);
-
-  // Purge selected categories if no longer available under selected MainCodes
-  useEffect(() => {
-    if (selectedCategories.length > 0) {
-      const valid = getValidSelectedCategories(selectedCategories, categoriesList);
-      if (valid.length !== selectedCategories.length) {
-        setSelectedCategories(valid);
+  // Bidirectional linked options computation
+  const linkedResult = useMemo(() => {
+    return computeLinkedClassificationOptions(
+      products,
+      {
+        getMainCode: (p) => p.mainCode,
+        getCategory: (p) => p.category
+      },
+      {
+        mainCodes: selectedMainCodes,
+        categories: selectedCategories
       }
-    }
-  }, [categoriesList, selectedCategories]);
+    );
+  }, [products, selectedMainCodes, selectedCategories]);
+
+  const mainCodesList = linkedResult.mainCodeOptions;
+  const categoriesList = linkedResult.categoryOptions;
+  const filteredBaseProducts = linkedResult.filteredItems;
 
   const handleSetMainCodePreset = (preset: 'all' | 'food' | 'grocery' | 'nonfood' | 'noncore') => {
     if (preset === 'all') {
@@ -65,17 +68,7 @@ export const TopSalesSection: React.FC<TopSalesSectionProps> = ({
   };
 
   const topProducts = useMemo(() => {
-    let list = [...products];
-
-    // Filter by MainCodes
-    if (selectedMainCodes.length > 0) {
-      list = list.filter((p) => matchesMainCodeFilter(p.mainCode, selectedMainCodes));
-    }
-
-    // Filter by Categories
-    if (selectedCategories.length > 0) {
-      list = list.filter((p) => matchesCategoryFilter(p.category, selectedCategories));
-    }
+    let list = [...filteredBaseProducts];
 
     list.sort((a, b) => {
       const calcA = analyticsMap.get(a.id);
@@ -104,7 +97,7 @@ export const TopSalesSection: React.FC<TopSalesSectionProps> = ({
     });
 
     return list.slice(0, 100);
-  }, [products, analyticsMap, activeTab, selectedMainCodes, selectedCategories]);
+  }, [filteredBaseProducts, analyticsMap, activeTab]);
 
   return (
     <div className={`p-5 rounded-2xl border ${isDarkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-200 text-slate-800'} shadow-2xs space-y-4`}>

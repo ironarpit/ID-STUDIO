@@ -313,6 +313,7 @@ export const BrandDashboardView: React.FC<BrandDashboardViewProps> = ({
           </div>
         ))}
       </div>
+      )}
     </div>
   );
 };

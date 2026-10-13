@@ -28,6 +28,8 @@ import { getUniqueMainCodes, matchesMainCodeFilter, deriveCategoriesFromProducts
 import { printHtmlDocument } from '../../utils/exportEngine';
 import { formatStandardStockProductsText, copyToClipboard } from '../../utils/copyUtils';
 import { MultiSelectDropdown } from '../MultiSelectDropdown';
+import { ActiveFilterChips } from '../ActiveFilterChips';
+import { computeLinkedClassificationOptions } from '../../utils/linkedFilters';
 
 interface AnalyticsTableProps {
   title: string;
@@ -293,61 +295,54 @@ export const AnalyticsTable: React.FC<AnalyticsTableProps> = ({
     } catch (e) {}
   };
 
-  // Extract filter options
-  const mainCodes = useMemo(() => getUniqueMainCodes(products), [products]);
-
-  const categories = useMemo(() => {
-    return deriveCategoriesFromProducts(products, selectedMainCodes);
-  }, [products, selectedMainCodes]);
-
-  // Purge selected categories if no longer available under selected MainCodes
-  useEffect(() => {
-    if (selectedCategories.length > 0) {
-      const valid = getValidSelectedCategories(selectedCategories, categories);
-      if (valid.length !== selectedCategories.length) {
-        setSelectedCategories(valid);
-      }
-    }
-  }, [categories, selectedCategories]);
-
-  // High performance search & filter
-  const filteredProducts = useMemo(() => {
-    const term = searchTerm.trim().toLowerCase();
-    return products.filter((p) => {
-      if (selectedMainCodes.length > 0 && !matchesMainCodeFilter(p.mainCode, selectedMainCodes)) return false;
-      if (selectedCategories.length > 0 && !matchesCategoryFilter(p.category, selectedCategories)) return false;
-
+  // Base predicate for search, velocity, and stock status
+  const basePredicate = useMemo(() => {
+    return (p: Product) => {
       const calc = analyticsMap.get(p.id);
-
       // Velocity filter
       if (selectedVelocity !== 'all') {
         const vel = calc?.movementStatus || 'normal';
         if (vel !== selectedVelocity) return false;
       }
-
       // Stock status filter
       if (selectedStockStatus !== 'all') {
         const status = calc?.stockStatus || (p.stock <= 0 ? 'out_of_stock' : p.stock <= 10 ? 'low_stock' : 'in_stock');
         if (status !== selectedStockStatus) return false;
       }
-
-      if (!term) return true;
-
+      if (!searchTerm.trim()) return true;
+      const term = searchTerm.trim().toLowerCase();
       const nameMatch = p.name.toLowerCase().includes(term);
-      const barcodeMatch = p.barcode.toLowerCase().includes(term);
+      const barcodeMatch = p.barcode ? p.barcode.toLowerCase().includes(term) : false;
       const mainCodeMatch = p.mainCode ? p.mainCode.toLowerCase().includes(term) : false;
       const localCodeMatch = p.localCode ? p.localCode.toLowerCase().includes(term) : false;
       const categoryMatch = p.category ? p.category.toLowerCase().includes(term) : false;
-
-      // Check if any raw row custom value matches search term
       let rawMatch = false;
       if (p.rawRowData) {
         rawMatch = Object.values(p.rawRowData).some((v) => String(v).toLowerCase().includes(term));
       }
-
       return nameMatch || barcodeMatch || mainCodeMatch || localCodeMatch || categoryMatch || rawMatch;
-    });
-  }, [products, searchTerm, selectedMainCodes, selectedCategories, selectedVelocity, selectedStockStatus, analyticsMap]);
+    };
+  }, [searchTerm, selectedVelocity, selectedStockStatus, analyticsMap]);
+
+  // Bidirectional linked options computation
+  const linkedResult = useMemo(() => {
+    return computeLinkedClassificationOptions(
+      products,
+      {
+        getMainCode: (p) => p.mainCode,
+        getCategory: (p) => p.category
+      },
+      {
+        mainCodes: selectedMainCodes,
+        categories: selectedCategories
+      },
+      basePredicate
+    );
+  }, [products, selectedMainCodes, selectedCategories, basePredicate]);
+
+  const filteredProducts = linkedResult.filteredItems;
+  const mainCodes = linkedResult.mainCodeOptions;
+  const categories = linkedResult.categoryOptions;
 
   // Sorted & Rank-Ranged Products
   const sortedProducts = useMemo(() => {
@@ -1085,59 +1080,43 @@ export const AnalyticsTable: React.FC<AnalyticsTableProps> = ({
         </div>
       </div>
 
-      {/* Active Selected Badges for Quick Dismissal */}
-      {(selectedMainCodes.length > 0 || selectedCategories.length > 0) && (
-        <div className="flex items-center gap-1.5 flex-wrap pt-1 text-[11px]">
-          <span className="font-bold text-slate-400 mr-1">Active Filters:</span>
-          {selectedMainCodes.map((code) => (
-            <span
-              key={code}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-extrabold"
-            >
-              <span>MainCode: {code}</span>
-              <button
-                onClick={() => {
-                  setSelectedMainCodes(selectedMainCodes.filter((c) => c !== code));
-                  setPage(1);
-                }}
-                className="hover:text-rose-600 cursor-pointer"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </span>
-          ))}
-
-          {selectedCategories.map((cat) => (
-            <span
-              key={cat}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 font-bold"
-            >
-              <span>Category: {cat}</span>
-              <button
-                onClick={() => {
-                  setSelectedCategories(selectedCategories.filter((c) => c !== cat));
-                  setPage(1);
-                }}
-                className="hover:text-rose-600 cursor-pointer"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </span>
-          ))}
-
-          <button
-            onClick={() => {
+      {/* Reusable Linked Active Filter Chips */}
+      <ActiveFilterChips
+        groups={[
+          {
+            label: 'MainCode',
+            values: selectedMainCodes,
+            onRemove: (v) => {
+              setSelectedMainCodes(selectedMainCodes.filter((c) => c !== v));
+              setPage(1);
+            },
+            onClear: () => {
               setSelectedMainCodes([]);
+              setPage(1);
+            },
+            badgeColor: 'indigo',
+            incompatibleValues: mainCodes.filter((o) => o.incompatible).map((o) => o.value)
+          },
+          {
+            label: 'Category',
+            values: selectedCategories,
+            onRemove: (v) => {
+              setSelectedCategories(selectedCategories.filter((c) => c !== v));
+              setPage(1);
+            },
+            onClear: () => {
               setSelectedCategories([]);
               setPage(1);
-            }}
-            className="text-rose-600 dark:text-rose-400 hover:underline font-bold text-[11px] ml-1 cursor-pointer"
-          >
-            Clear Selected
-          </button>
-        </div>
-      )}
-
+            },
+            badgeColor: 'emerald',
+            incompatibleValues: categories.filter((o) => o.incompatible).map((o) => o.value)
+          }
+        ]}
+        onResetAll={handleResetFilters}
+        totalFilteredCount={filteredProducts.length}
+        totalItemCount={products.length}
+        isDarkMode={isDarkMode}
+      />
       {/* Desktop Table View (Compact High Density Professional Layout) */}
       <div className="hidden md:block overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
         <table className="w-full text-left text-xs border-collapse">

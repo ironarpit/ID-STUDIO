@@ -100,22 +100,31 @@ export const FocusIssuesView: React.FC<FocusIssuesViewProps> = ({
     return evaluatedProducts.filter(p => p.status === 'OUT_OF_STOCK' || p.status === 'LOW_STOCK');
   }, [evaluatedProducts]);
 
-  // Filter options
+  // Bidirectional linked categories (filtered by selectedBrand if active)
   const categories = useMemo(() => {
     const set = new Set<string>();
     allIssues.forEach(item => {
-      if (item.category) set.add(item.category);
+      if (selectedBrand !== 'all' && (item.brand || '').trim().toLowerCase() !== selectedBrand.trim().toLowerCase()) return;
+      if (item.category) set.add(item.category.trim());
     });
+    if (selectedCategory !== 'all' && !set.has(selectedCategory)) {
+      set.add(selectedCategory);
+    }
     return Array.from(set).sort();
-  }, [allIssues]);
+  }, [allIssues, selectedBrand, selectedCategory]);
 
+  // Bidirectional linked brands (filtered by selectedCategory if active)
   const brands = useMemo(() => {
     const set = new Set<string>();
     allIssues.forEach(item => {
-      if (item.brand) set.add(item.brand);
+      if (selectedCategory !== 'all' && (item.category || '').trim().toLowerCase() !== selectedCategory.trim().toLowerCase()) return;
+      if (item.brand) set.add(item.brand.trim());
     });
+    if (selectedBrand !== 'all' && !set.has(selectedBrand)) {
+      set.add(selectedBrand);
+    }
     return Array.from(set).sort();
-  }, [allIssues]);
+  }, [allIssues, selectedCategory, selectedBrand]);
 
   const activeFiltersCount = (selectedCategory !== 'all' ? 1 : 0) + (selectedBrand !== 'all' ? 1 : 0);
 

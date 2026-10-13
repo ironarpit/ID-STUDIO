@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, forwardRef, useImperativeHandle } from 'react';
 import {
   X,
   CheckCircle2,
@@ -6,14 +6,19 @@ import {
   ShoppingBag,
   ArrowRight,
   AlertCircle,
+  AlertTriangle,
   Package
 } from 'lucide-react';
-import { AuditProductResult } from '../../types';
+import { Product, AuditProductResult, AuditCheckFormHandle } from '../../types';
+import { formatCleanSalesPeriod } from '../../utils/fileParser';
 import { useModalTransition } from '../../utils/useModalTransition';
 
 interface FocusProductCheckModalProps {
   isOpen: boolean;
   result: AuditProductResult | null;
+  liveProduct?: Product | null;
+  isAmbiguousMatch?: boolean;
+  salesPeriodText?: string;
   currentCategory?: string;
   remainingInCategoryCount?: number;
   onClose: () => void;
@@ -30,9 +35,12 @@ interface FocusProductCheckModalProps {
   isDarkMode?: boolean;
 }
 
-export const FocusProductCheckModal: React.FC<FocusProductCheckModalProps> = ({
+export const FocusProductCheckModal = forwardRef<AuditCheckFormHandle, FocusProductCheckModalProps>(({
   isOpen,
   result,
+  liveProduct,
+  isAmbiguousMatch = false,
+  salesPeriodText,
   currentCategory,
   remainingInCategoryCount,
   onClose,
@@ -40,7 +48,7 @@ export const FocusProductCheckModal: React.FC<FocusProductCheckModalProps> = ({
   onSaveAndNext,
   onViewStockIqDetails,
   isDarkMode = false,
-}) => {
+}, ref) => {
   const { handleClose, backdropClass, panelClass } = useModalTransition({
     onClose,
     isOpen: isOpen && !!result,
@@ -90,24 +98,24 @@ export const FocusProductCheckModal: React.FC<FocusProductCheckModalProps> = ({
 
   const isCore = result.focusType === 'core' || (result.mainCode || '').toUpperCase().includes('CORE');
 
-  const handleSave = async (advanceToNext: boolean) => {
+  const handleSave = async (advanceToNext: boolean): Promise<boolean> => {
     if (!display) {
       setErrorMessage('Please indicate if Stock / Display is on floor (YES or NO).');
-      return;
+      return false;
     }
     if (!board) {
       setErrorMessage('Please indicate if Board is available / correct (YES or NO).');
-      return;
+      return false;
     }
     if (!boardType) {
       setErrorMessage('Please select Board Type (B1G1, OFF, or ONLY).');
-      return;
+      return false;
     }
 
     setErrorMessage(null);
     setIsSubmitting(true);
     try {
-      await onSaveAndNext(
+      const saved = await onSaveAndNext(
         {
           display,
           board,
@@ -115,14 +123,72 @@ export const FocusProductCheckModal: React.FC<FocusProductCheckModalProps> = ({
         },
         advanceToNext
       );
+      if (saved === false) {
+        return false;
+      }
+      return true;
     } catch (err: any) {
       setErrorMessage(err?.message || 'Failed to save check result.');
+      return false;
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  useImperativeHandle(ref, () => ({
+    submitValidated: async (advanceToNext: boolean) => {
+      return await handleSave(advanceToNext);
+    }
+  }));
+
   const codeStr = String(result.bansalCode || result.code || result.localCode || '');
+
+  const isAmbiguous = isAmbiguousMatch || Boolean(result.isAmbiguousMatch);
+
+  // Live Stock Display Values (Exact source fields matching Stock IQ Product Inspector)
+  // Preserves 0 and negative quantities. Missing stock or sales must not become zero.
+  const liveClosingDisplay = (() => {
+    if (isAmbiguous) return 'Ambiguous Match';
+    if (!liveProduct) return 'Not Available';
+    const val = liveProduct.stock ?? liveProduct.closingQty ?? liveProduct.closingStock;
+    if (val !== undefined && val !== null && !isNaN(Number(val))) {
+      return String(Number(val));
+    }
+    return 'Not Available';
+  })();
+
+  const liveSalesDisplay = (() => {
+    if (isAmbiguous) return 'Ambiguous Match';
+    if (!liveProduct) return 'Not Available';
+    const val = liveProduct.salesCount ?? liveProduct.salesQty;
+    if (val !== undefined && val !== null && !isNaN(Number(val))) {
+      return String(Number(val));
+    }
+    return 'Not Available';
+  })();
+
+  const liveMrpDisplay = (() => {
+    if (isAmbiguous) return 'Ambiguous Match';
+    if (!liveProduct) return 'Not Available';
+    const val = liveProduct.mrp;
+    if (val !== undefined && val !== null && !isNaN(Number(val))) {
+      return `₹${Number(val)}`;
+    }
+    return 'Not Available';
+  })();
+
+  const liveSpDisplay = (() => {
+    if (isAmbiguous) return 'Ambiguous Match';
+    if (!liveProduct) return 'Not Available';
+    const val = liveProduct.retailPrice ?? liveProduct.salePrice;
+    if (val !== undefined && val !== null && !isNaN(Number(val))) {
+      return `₹${Number(val)}`;
+    }
+    return 'Not Available';
+  })();
+
+  const cleanSalesPeriod = formatCleanSalesPeriod(salesPeriodText);
+
   const mrpFormatted = typeof result.mrp === 'number' && !isNaN(result.mrp)
     ? `₹${result.mrp.toFixed(2)}`
     : result.mrp
@@ -221,23 +287,75 @@ export const FocusProductCheckModal: React.FC<FocusProductCheckModalProps> = ({
             </h3>
           </div>
 
-          {/* Pricing & Offer Row */}
-          <div className="grid grid-cols-2 gap-3 pt-1">
-            <div className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
+          {/* Focus Master Offer & Focus Snapshot MRP Row */}
+          <div className="grid grid-cols-2 gap-2 pt-0.5">
+            <div className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
               <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider block">
-                MRP
+                FOCUS MRP
               </span>
-              <span className="text-base font-black text-slate-900 dark:text-white font-mono">
+              <span className="text-sm font-black text-slate-900 dark:text-white font-mono">
                 {mrpFormatted}
               </span>
             </div>
-
-            <div className="p-2.5 rounded-xl border border-indigo-100 dark:border-indigo-900/60 bg-indigo-50/50 dark:bg-indigo-950/30">
+            <div className="p-2 rounded-xl border border-indigo-100 dark:border-indigo-900/60 bg-indigo-50/50 dark:bg-indigo-950/30">
               <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider block">
-                OFFER
+                FOCUS OFFER
               </span>
-              <span className="text-xs sm:text-sm font-bold text-indigo-900 dark:text-indigo-200 truncate block" title={result.focusOffer || result.issueReason || 'No special offer'}>
+              <span className="text-xs font-bold text-indigo-900 dark:text-indigo-200 truncate block" title={result.focusOffer || result.issueReason || 'No special offer'}>
                 {result.focusOffer || result.issueReason || '—'}
+              </span>
+            </div>
+          </div>
+
+          {/* Live Pricing & Stock Highlights (Compact Grid: MRP, SP, Closing, Sales) */}
+          <div className="space-y-1.5 pt-1 border-t border-slate-100 dark:border-slate-800">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                CURRENT STOCK IQ METRICS
+              </span>
+              {isAmbiguous && (
+                <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" /> Ambiguous Match
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 font-mono text-xs">
+              {/* Live MRP */}
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80 shadow-2xs">
+                <span className="text-[10px] text-slate-400 font-sans uppercase font-bold block">MRP</span>
+                <span className={`font-bold text-sm ${isAmbiguous ? 'text-amber-600 text-xs' : 'text-slate-900 dark:text-white'}`}>
+                  {liveMrpDisplay}
+                </span>
+              </div>
+              {/* Live SP (Selling Price) */}
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80 shadow-2xs">
+                <span className="text-[10px] text-slate-400 font-sans uppercase font-bold block">SP</span>
+                <span className={`font-bold text-sm ${isAmbiguous ? 'text-amber-600 text-xs' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                  {liveSpDisplay}
+                </span>
+              </div>
+              {/* Closing Stock */}
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80 shadow-2xs">
+                <span className="text-[10px] text-slate-400 font-sans uppercase font-bold block">Closing</span>
+                <span className={`font-bold text-sm ${isAmbiguous ? 'text-amber-600 text-xs' : 'text-indigo-600 dark:text-indigo-400'}`}>
+                  {liveClosingDisplay}
+                </span>
+              </div>
+              {/* Sales Qty */}
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80 shadow-2xs">
+                <span className="text-[10px] text-slate-400 font-sans uppercase font-bold block">Sales</span>
+                <span className={`font-bold text-sm ${isAmbiguous ? 'text-amber-600 text-xs' : 'text-slate-800 dark:text-slate-200'}`}>
+                  {liveSalesDisplay}
+                </span>
+              </div>
+            </div>
+
+            {/* Stock Report Period footer */}
+            <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 pt-0.5 px-0.5">
+              <span>
+                {cleanSalesPeriod !== 'Period unavailable'
+                  ? <>Stock Report: <strong className="text-slate-700 dark:text-slate-300 font-semibold">{cleanSalesPeriod}</strong></>
+                  : 'Stock Report Period: Not Available'}
               </span>
             </div>
           </div>
@@ -421,4 +539,6 @@ export const FocusProductCheckModal: React.FC<FocusProductCheckModalProps> = ({
       </div>
     </div>
   );
-};
+});
+
+FocusProductCheckModal.displayName = 'FocusProductCheckModal';

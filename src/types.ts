@@ -99,6 +99,7 @@ export type AnalyticsViewType =
   | 'non_core_focus_check'
   | 'focus_flagged_issues'
   | 'focus_history';
+  | 'stock_variations';
 
 export interface ColumnMapping {
   barcode: string;
@@ -369,6 +370,10 @@ export const BOARD_STATUS_OPTIONS: { value: BoardStatus; label: string }[] = [
   { value: 'wrong_price', label: 'Wrong Price' },
   { value: 'not_applicable', label: 'Not Applicable' },
 ];
+
+export interface AuditCheckFormHandle {
+  submitValidated: (advanceToNext: boolean) => Promise<boolean>;
+}
 
 export const ISSUE_REASON_PRESETS: Record<AuditType, string[]> = {
   zero_sales: [

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { 
   X, 
   ArrowLeft, 
@@ -23,7 +23,8 @@ import {
 } from 'lucide-react';
 import { 
   AuditProductResult, 
-  Product 
+  Product,
+  AuditCheckFormHandle
 } from '../../types';
 import { cleanDateOnly } from '../../utils/fileParser';
 import { formatSingleProductResultText, copyToClipboard } from '../../utils/copyUtils';
@@ -63,7 +64,7 @@ export const DISPLAY_LOCATION_OPTIONS = [
   'Bin'
 ];
 
-export const FloorProductInspectorModal: React.FC<FloorProductInspectorModalProps> = ({
+export const FloorProductInspectorModal = forwardRef<AuditCheckFormHandle, FloorProductInspectorModalProps>(({
   result,
   product,
   activeChecker,
@@ -74,7 +75,7 @@ export const FloorProductInspectorModal: React.FC<FloorProductInspectorModalProp
   onSaveResult,
   onOpenScanVerify,
   onViewStockIqDetails
-}) => {
+}, ref) => {
   // 1. Form state fields
   const [isOnFloor, setIsOnFloor] = useState<'yes' | 'no' | undefined>(() => {
     if (result.isOnFloor === true || result.isOnFloor === 'yes') return 'yes';
@@ -356,11 +357,11 @@ export const FloorProductInspectorModal: React.FC<FloorProductInspectorModalProp
     return null;
   };
 
-  const handleSaveAction = async (isNext: boolean) => {
+  const handleSaveAction = async (isNext: boolean): Promise<boolean> => {
     const errorMsg = validateForm();
     if (errorMsg) {
       setValidationError(errorMsg);
-      return;
+      return false;
     }
 
     setValidationError(null);
@@ -389,14 +390,25 @@ export const FloorProductInspectorModal: React.FC<FloorProductInspectorModalProp
         displayPosition: visibilityLevel === 'eye_level' ? 'eye_level' : visibilityLevel === 'above_eye' ? 'above_eye' : visibilityLevel === 'below_eye' ? 'below_eye' : 'not_displayed',
       };
 
-      await onSaveResult(updatedFields, targetStatus, isNext);
+      const saveResult = await onSaveResult(updatedFields, targetStatus, isNext);
+      if (saveResult === false) {
+        return false;
+      }
+      return true;
     } catch (err: any) {
       console.error('Error in handleSaveAction:', err);
       setValidationError(err?.message || 'Failed to save audit result. Please try again.');
+      return false;
     } finally {
       setIsSaving(false);
     }
   };
+
+  useImperativeHandle(ref, () => ({
+    submitValidated: async (advanceToNext: boolean) => {
+      return await handleSaveAction(advanceToNext);
+    }
+  }));
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-slate-900 w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-2xl sm:mx-auto sm:my-auto sm:rounded-2xl sm:border sm:border-slate-300 sm:dark:border-slate-700 sm:shadow-2xl overflow-hidden font-sans">
@@ -956,4 +968,6 @@ export const FloorProductInspectorModal: React.FC<FloorProductInspectorModalProp
       </div>
     </div>
   );
-};
+});
+
+FloorProductInspectorModal.displayName = 'FloorProductInspectorModal';

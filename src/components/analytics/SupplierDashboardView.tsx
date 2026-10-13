@@ -313,6 +313,7 @@ export const SupplierDashboardView: React.FC<SupplierDashboardViewProps> = ({
           </div>
         ))}
       </div>
+      )}
     </div>
   );
 };

@@ -18,6 +18,7 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { Product, ComputedProductAnalytics } from '../types';
+import { loadStockVariations, getStockVariation, upsertStockVariation, deleteStockVariation, getSystemStock, StockVariation } from '../utils/stockVariations';
 import { getProductBrand } from '../utils/analytics';
 import { useModalTransition } from '../utils/useModalTransition';
 import { cleanDateOnly } from '../utils/fileParser';
@@ -190,7 +191,22 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
 
   const mrp = product.mrp || product.retailPrice || 0;
   const retailPrice = product.retailPrice || product.mrp || 0;
-  const stock = product.stock || 0;
+  const systemStock = getSystemStock(product);
+  const [variationsMap, setVariationsMap] = React.useState<Record<string, StockVariation>>(loadStockVariations);
+  const currentVariation = React.useMemo(() => getStockVariation(product, variationsMap), [product, variationsMap]);
+  const stock = currentVariation ? systemStock + currentVariation.adjustment : systemStock;
+
+  const [physicalInput, setPhysicalInput] = React.useState<string>(currentVariation ? String(currentVariation.physicalStock) : '');
+  const [remarkInput, setRemarkInput] = React.useState<string>(currentVariation?.remark || '');
+  const [variationMsg, setVariationMsg] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    const vars = loadStockVariations();
+    setVariationsMap(vars);
+    const v = getStockVariation(product, vars);
+    setPhysicalInput(v ? String(v.physicalStock) : '');
+    setRemarkInput(v?.remark || '');
+  }, [product]);
   const salesCount = product.salesCount || 0;
 
   const discountPct = mrp > retailPrice && mrp > 0 ? Math.round(((mrp - retailPrice) / mrp) * 100) : 0;

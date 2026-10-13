@@ -225,7 +225,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       items: [
         { id: 'low_stock', label: 'Low Stock SKUs', icon: AlertTriangle, badge: summary.lowStockCount || null, badgeColor: 'bg-amber-500 text-white' },
         { id: 'out_of_stock', label: 'Out of Stock SKUs', icon: PackageX, badge: summary.outOfStockCount || null, badgeColor: 'bg-rose-500 text-white' },
-        { id: 'overstock', label: 'Overstock SKUs', icon: PackagePlus, badge: summary.overstockCount || null }
+        { id: 'overstock', label: 'Overstock SKUs', icon: PackagePlus, badge: summary.overstockCount || null },
+        { id: 'stock_variations', label: 'Stock Variations', icon: Layers }
       ]
     },
     {

@@ -18,7 +18,8 @@ import {
   AuditSession,
   AuditProductResult,
   Product,
-  StockReportMeta
+  StockReportMeta,
+  AuditCheckFormHandle
 } from '../../types';
 import { saveProductResult, saveAuditSessionDB } from '../../utils/auditStorage';
 import { exportAuditSessionToExcel, exportFocusAuditToExcel } from '../../utils/auditExport';
@@ -220,6 +221,10 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
     barcode?: string;
   } | null>(null);
   const [showUnsavedPrompt, setShowUnsavedPrompt] = useState<boolean>(false);
+  const [isUnsavedSaving, setIsUnsavedSaving] = useState<boolean>(false);
+  const activeFormRef = useRef<AuditCheckFormHandle | null>(null);
+  const isSavingRef = useRef<boolean>(false);
+  const isSaveAndOpenActiveRef = useRef<boolean>(false);
 
   // Mobile Filter Drawer state
   const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState<boolean>(false);
@@ -396,6 +401,7 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
   useEffect(() => {
     // 1. Matched in active audit
     const handleLocateEvent = (e: Event) => {
+      if (isSavingRef.current) return;
       const customEv = e as CustomEvent<{ productId: string; bansalCode?: string; barcode?: string }>;
       if (!customEv.detail) return;
       const { productId, bansalCode, barcode } = customEv.detail;
@@ -444,6 +450,7 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
 
     // 2. Valid product outside active audit
     const handleNotInAuditEvent = (e: Event) => {
+      if (isSavingRef.current) return;
       const customEv = e as CustomEvent<{ productName?: string; bansalCode?: string; barcode?: string }>;
       const detail = customEv.detail;
 
@@ -470,6 +477,7 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
 
     // 3. Unknown Barcode
     const handleNotFoundEvent = (e: Event) => {
+      if (isSavingRef.current) return;
       const customEv = e as CustomEvent<{ barcode?: string }>;
       const detail = customEv.detail;
 
@@ -650,7 +658,8 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
   const handleUpdateProductStatus = async (
     extraFields?: Partial<AuditProductResult>,
     newStatus: 'done' | 'flagged' | 'pending' = 'done',
-    isNext: boolean = false
+    isNext: boolean = false,
+    suppressClose: boolean = false
   ): Promise<boolean> => {
     if (!inspectingResult) return false;
     setIsSaving(true);
@@ -714,8 +723,10 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
           restoreScrollPosition();
         }
       } else {
-        setInspectingResult(null);
-        restoreScrollPosition();
+        if (!suppressClose) {
+          setInspectingResult(null);
+          restoreScrollPosition();
+        }
       }
 
       return true;
@@ -754,7 +765,8 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
       board: 'YES' | 'NO';
       boardType: 'B1G1' | 'OFF' | 'ONLY';
     },
-    advanceToNext: boolean
+    advanceToNext: boolean,
+    suppressClose: boolean = false
   ): Promise<boolean> => {
     if (!inspectingResult) return false;
     setIsSaving(true);
@@ -824,8 +836,10 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
           restoreScrollPosition();
         }
       } else {
-        setInspectingResult(null);
-        restoreScrollPosition();
+        if (!suppressClose) {
+          setInspectingResult(null);
+          restoreScrollPosition();
+        }
       }
 
       return true;
@@ -1013,57 +1027,57 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
 
   // Unsaved Edits Modal actions
   const handleUnsavedDiscardAndProceed = () => {
+    if (isSavingRef.current) return;
     setIsModalDirty(false);
     setShowUnsavedPrompt(false);
-    if (!pendingScan) return;
-
-    if (pendingScan.type === 'open_product' && pendingScan.target) {
-      handleOpenInspector(pendingScan.target);
+    const targetToOpen = pendingScan;
+    setPendingScan(null);
+    if (!targetToOpen) return;
+    if (targetToOpen.type === 'open_product' && targetToOpen.target) {
+      handleOpenInspector(targetToOpen.target);
     } else {
       setInspectingResult(null);
     }
-    setPendingScan(null);
   };
 
   const handleUnsavedSaveAndProceed = async () => {
-    if (!inspectingResult) return;
+    if (!inspectingResult || isSavingRef.current) return;
+    isSavingRef.current = true;
+    isSaveAndOpenActiveRef.current = true;
+    setIsUnsavedSaving(true);
     try {
-      // Perform default save for inspecting product
-      if (isDailyPurchase) {
-        await handleUpdateProductStatus({
-          isDisplayedOnFloor: inspectingResult.isDisplayedOnFloor || 'yes',
-          isOnFloor: 'yes',
-          isBoardCorrect: inspectingResult.isBoardCorrect || 'yes',
-          boardStatus: 'board_correct',
-          dailyPurchaseOutcome: 'OK'
-        }, 'done', false);
-      } else if (isFocusAudit) {
-        await handleSaveFocusCheckAndNext({
-          display: inspectingResult.display || 'YES',
-          board: inspectingResult.board || 'YES',
-          boardType: inspectingResult.boardType || 'OFF'
-        }, false);
-      } else {
-        await handleUpdateProductStatus({
-          isOnFloor: inspectingResult.isOnFloor ?? 'yes',
-          boardStatus: inspectingResult.boardStatus || 'correct'
-        }, 'done', false);
+      if (!activeFormRef.current) {
+        throw new Error('Check form reference is not ready.');
       }
-    } catch (e) {
-      console.warn('Auto save before switch error:', e);
+      const savedSuccessfully = await activeFormRef.current.submitValidated(false);
+      // Safeguard: Only explicit boolean true confirms persistence; undefined, void or false is NOT success
+      if (savedSuccessfully === true) {
+        setIsModalDirty(false);
+        setShowUnsavedPrompt(false);
+        const nextScan = pendingScan;
+        setPendingScan(null);
+        if (nextScan && nextScan.type === 'open_product' && nextScan.target) {
+          handleOpenInspector(nextScan.target);
+        } else {
+          setInspectingResult(null);
+        }
+      } else {
+        setShowUnsavedPrompt(false);
+        showRunnerToast('Please correct validation errors or retry saving Product A.', 'error');
+      }
+    } catch (err: any) {
+      console.error('Error during Save & Open Scanned Product:', err);
+      setShowUnsavedPrompt(false);
+      showRunnerToast('Save failed: ' + (err?.message || 'Please check connection and retry.'), 'error');
+    } finally {
+      isSavingRef.current = false;
+      isSaveAndOpenActiveRef.current = false;
+      setIsUnsavedSaving(false);
     }
-
-    setIsModalDirty(false);
-    setShowUnsavedPrompt(false);
-    if (pendingScan && pendingScan.type === 'open_product' && pendingScan.target) {
-      handleOpenInspector(pendingScan.target);
-    } else {
-      setInspectingResult(null);
-    }
-    setPendingScan(null);
   };
 
   const handleUnsavedCancel = () => {
+    if (isSavingRef.current) return;
     setShowUnsavedPrompt(false);
     setPendingScan(null);
   };
@@ -1510,40 +1524,102 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
                           </div>
                         </>
                       );
-                    })() : isFocusAudit ? (
-                      <>
-                        {/* Main Code (if available) & Category & Bansal Code */}
-                        <div className="flex items-center gap-1.5 text-[11px] font-mono text-slate-600 dark:text-slate-300 flex-wrap">
-                          {res.mainCode && (
-                            <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-bold border border-slate-200 dark:border-slate-700">
-                              MC: {res.mainCode}
-                            </span>
-                          )}
-                          {res.category && (
-                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
-                              isCoreFocus
-                                ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800'
-                                : 'bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 border-teal-200 dark:border-teal-800'
-                            }`}>
-                              {res.category}
-                            </span>
-                          )}
-                          <span className="font-sans text-slate-500 text-xs">
-                            Code: <strong className="font-mono text-slate-800 dark:text-slate-200">{res.bansalCode || res.code || prod?.localCode || '—'}</strong>
-                          </span>
-                        </div>
+                    })() : isFocusAudit ? (() => {
+                      const liveMatch = getLiveProductForAuditResult(res);
+                      const liveProd = liveMatch.product;
+                      const isAmbiguous = liveMatch.isAmbiguous || Boolean(res.isAmbiguousMatch);
 
-                        {/* MRP & Focus Offer */}
-                        <div className="flex items-center gap-3 text-xs font-mono">
-                          <span>MRP: <strong className="text-slate-900 dark:text-white font-bold">₹{res.mrp ?? res.retailPrice ?? prod?.retailPrice ?? 0}</strong></span>
-                          {res.focusOffer && (
-                            <span className="text-amber-700 dark:text-amber-300 font-bold bg-amber-50 dark:bg-amber-950/50 px-2 py-0.5 rounded border border-amber-200 dark:border-amber-800 text-[11px] truncate max-w-full">
-                              Offer: {res.focusOffer}
+                      let closingDisplay = 'Not Available';
+                      if (isAmbiguous) {
+                        closingDisplay = 'Ambiguous Match';
+                      } else if (liveProd) {
+                        const val = liveProd.stock ?? liveProd.closingQty ?? liveProd.closingStock;
+                        if (val !== undefined && val !== null && !isNaN(Number(val))) {
+                          closingDisplay = String(Number(val));
+                        }
+                      }
+
+                      let salesDisplay = 'Not Available';
+                      if (isAmbiguous) {
+                        salesDisplay = 'Ambiguous Match';
+                      } else if (liveProd) {
+                        const val = liveProd.salesCount ?? liveProd.salesQty;
+                        if (val !== undefined && val !== null && !isNaN(Number(val))) {
+                          salesDisplay = String(Number(val));
+                        }
+                      }
+
+                      let mrpDisplay = '—';
+                      if (isAmbiguous) {
+                        mrpDisplay = 'Ambiguous';
+                      } else {
+                        const val = liveProd?.mrp ?? res.mrp;
+                        if (val !== undefined && val !== null && !isNaN(Number(val)) && Number(val) > 0) {
+                          mrpDisplay = `₹${Number(val)}`;
+                        }
+                      }
+
+                      let spDisplay = '—';
+                      if (isAmbiguous) {
+                        spDisplay = 'Ambiguous';
+                      } else {
+                        const val = liveProd?.retailPrice ?? res.retailPrice ?? res.salePrice ?? liveProd?.mrp ?? res.mrp;
+                        if (val !== undefined && val !== null && !isNaN(Number(val)) && Number(val) > 0) {
+                          spDisplay = `₹${Number(val)}`;
+                        }
+                      }
+
+                      return (
+                        <>
+                          {/* Main Code (if available) & Category & Bansal Code */}
+                          <div className="flex items-center gap-1.5 text-[11px] font-mono text-slate-600 dark:text-slate-300 flex-wrap">
+                            {res.mainCode && (
+                              <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-bold border border-slate-200 dark:border-slate-700">
+                                MC: {res.mainCode}
+                              </span>
+                            )}
+                            {res.category && (
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                                isCoreFocus
+                                  ? 'bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800'
+                                  : 'bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 border-teal-200 dark:border-teal-800'
+                              }`}>
+                                {res.category}
+                              </span>
+                            )}
+                            <span className="font-sans text-slate-500 text-xs">
+                              Code: <strong className="font-mono text-slate-800 dark:text-slate-200">{res.bansalCode || res.code || prod?.localCode || '—'}</strong>
                             </span>
-                          )}
-                        </div>
-                      </>
-                    ) : (
+                          </div>
+
+                          {/* Focus Offer & Snapshot MRP */}
+                          <div className="flex items-center gap-3 text-xs font-mono">
+                            <span>Focus MRP: <strong className="text-slate-900 dark:text-white font-bold">₹{res.mrp ?? res.retailPrice ?? prod?.retailPrice ?? 0}</strong></span>
+                            {res.focusOffer && (
+                              <span className="text-amber-700 dark:text-amber-300 font-bold bg-amber-50 dark:bg-amber-950/50 px-2 py-0.5 rounded border border-amber-200 dark:border-amber-800 text-[11px] truncate max-w-full">
+                                Offer: {res.focusOffer}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Consistent Live Stock Metrics on Card: Closing, Sales, Live SP */}
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 text-[11px] font-mono pt-1">
+                            <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300">
+                              MRP: <strong className="text-slate-900 dark:text-white font-bold">{mrpDisplay}</strong>
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300">
+                              SP: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">{spDisplay}</strong>
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300">
+                              Closing: <strong className="text-indigo-600 dark:text-indigo-400 font-bold">{closingDisplay}</strong>
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300">
+                              Sales: <strong className="text-slate-800 dark:text-slate-200 font-bold">{salesDisplay}</strong>
+                            </span>
+                          </div>
+                        </>
+                      );
+                    })() : (
                       <>
                         {/* Standard Stock IQ Barcode, Code, Category */}
                         <div className="flex items-center gap-2 text-[11px] font-mono text-slate-600 dark:text-slate-300 truncate">
@@ -1651,11 +1727,49 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
         )}
       </div>
 
+      {/* 2B. PENDING SCAN RETRY BANNER WHEN UNSAVED EDITS OR RETRY IS PENDING */}
+      {inspectingResult && pendingScan && !showUnsavedPrompt && (
+        <div className="fixed top-2 left-1/2 -translate-x-1/2 z-[120] max-w-lg w-[95%] sm:w-full px-3 animate-fade-in">
+          <div className="p-3 rounded-2xl bg-amber-500/95 dark:bg-amber-600/95 text-white shadow-2xl border border-amber-400 flex items-center justify-between gap-3 text-xs font-bold">
+            <div className="flex items-center gap-2 min-w-0">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-white" />
+              <div className="min-w-0">
+                <div className="truncate font-black">
+                  Pending Scan: {pendingScan.productName || 'Scanned Product'}
+                </div>
+                <div className="text-[10px] text-amber-100 font-medium">
+                  Fix required inputs or retry saving before opening.
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={handleUnsavedSaveAndProceed}
+                disabled={isUnsavedSaving}
+                className="px-3 py-1.5 rounded-xl bg-white text-amber-900 hover:bg-amber-100 disabled:opacity-50 text-[11px] font-black shadow-xs cursor-pointer active:scale-95 transition-all flex items-center gap-1"
+              >
+                {isUnsavedSaving ? 'Saving...' : 'Retry Save & Open'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingScan(null)}
+                className="p-1 rounded-lg text-white/80 hover:text-white hover:bg-amber-600/60 cursor-pointer min-h-[32px] min-w-[32px] flex items-center justify-center"
+                title="Dismiss Pending Scan"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 3. PRODUCT INSPECTOR MODAL */}
       {inspectingResult && isDailyPurchase ? (() => {
         const liveMatch = getLiveProductForAuditResult(inspectingResult);
         return (
           <DailyPurchaseCheckModal
+            ref={activeFormRef}
             isOpen={!!inspectingResult}
             result={inspectingResult}
             liveProduct={liveMatch.product}
@@ -1666,26 +1780,36 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
             onDirtyChange={(dirty) => setIsModalDirty(dirty)}
             onClose={handleCloseInspector}
             onSave={(extraFields, newStatus, isNext) =>
-              handleUpdateProductStatus(extraFields, newStatus, isNext)
+              handleUpdateProductStatus(extraFields, newStatus, isNext, isSaveAndOpenActiveRef.current)
             }
             onViewStockIqDetails={() => handleViewStockIqDetails(inspectingResult)}
             isDarkMode={isDarkMode}
           />
         );
-      })() : inspectingResult && isFocusAudit ? (
-        <FocusProductCheckModal
-          isOpen={!!inspectingResult}
-          result={inspectingResult}
-          currentCategory={selectedCategory !== 'all' ? selectedCategory : (inspectingResult.category || '')}
-          remainingInCategoryCount={remainingInCategoryCount}
-          onDirtyChange={(dirty) => setIsModalDirty(dirty)}
-          onClose={handleCloseInspector}
-          onSaveAndNext={handleSaveFocusCheckAndNext}
-          onViewStockIqDetails={() => handleViewStockIqDetails(inspectingResult)}
-          isDarkMode={isDarkMode}
-        />
-      ) : inspectingResult ? (
+      })() : inspectingResult && isFocusAudit ? (() => {
+        const liveMatch = getLiveProductForAuditResult(inspectingResult);
+        return (
+          <FocusProductCheckModal
+            ref={activeFormRef}
+            isOpen={!!inspectingResult}
+            result={inspectingResult}
+            liveProduct={liveMatch.product}
+            isAmbiguousMatch={liveMatch.isAmbiguous}
+            salesPeriodText={salesPeriodText}
+            currentCategory={selectedCategory !== 'all' ? selectedCategory : (inspectingResult.category || '')}
+            remainingInCategoryCount={remainingInCategoryCount}
+            onDirtyChange={(dirty) => setIsModalDirty(dirty)}
+            onClose={handleCloseInspector}
+            onSaveAndNext={(fields, advanceToNext) =>
+              handleSaveFocusCheckAndNext(fields, advanceToNext, isSaveAndOpenActiveRef.current)
+            }
+            onViewStockIqDetails={() => handleViewStockIqDetails(inspectingResult)}
+            isDarkMode={isDarkMode}
+          />
+        );
+      })() : inspectingResult ? (
         <FloorProductInspectorModal
+          ref={activeFormRef}
           result={inspectingResult}
           product={getLiveProductForAuditResult(inspectingResult).product || products.find((p) => p.id === inspectingResult.productId)}
           activeChecker={activeChecker}
@@ -1697,7 +1821,7 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
           isDarkMode={isDarkMode}
           onClose={handleCloseInspector}
           onSaveResult={(updatedFields, status, isNext) => 
-            handleUpdateProductStatus(updatedFields, status, isNext)
+            handleUpdateProductStatus(updatedFields, status, isNext, isSaveAndOpenActiveRef.current)
           }
           onOpenScanVerify={handleOpenVerify}
           onViewStockIqDetails={() => handleViewStockIqDetails(inspectingResult)}
@@ -1780,27 +1904,37 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
               <button
                 type="button"
                 onClick={handleUnsavedSaveAndProceed}
-                className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+                disabled={isUnsavedSaving}
+                className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
               >
-                <CheckCircle2 className="w-4 h-4" />
-                <span>Save & Open Scanned Product</span>
+                {isUnsavedSaving ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin shrink-0" />
+                    <span>Saving Product A...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Save & Open Scanned Product</span>
+                  </>
+                )}
               </button>
-
               {/* Option 2: Discard & Open Scanned Product */}
               <button
                 type="button"
                 onClick={handleUnsavedDiscardAndProceed}
-                className="w-full min-h-[44px] px-4 py-2.5 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 text-rose-700 dark:text-rose-300 font-bold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+                disabled={isUnsavedSaving}
+                className="w-full min-h-[44px] px-4 py-2.5 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 disabled:opacity-50 disabled:cursor-not-allowed text-rose-700 dark:text-rose-300 font-bold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
               >
                 <X className="w-4 h-4" />
                 <span>Discard & Open Scanned Product</span>
               </button>
-
               {/* Option 3: Continue Editing */}
               <button
                 type="button"
                 onClick={handleUnsavedCancel}
-                className="w-full min-h-[44px] px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 font-bold text-xs transition-colors cursor-pointer flex items-center justify-center"
+                disabled={isUnsavedSaving}
+                className="w-full min-h-[44px] px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed font-bold text-xs transition-colors cursor-pointer flex items-center justify-center"
               >
                 Continue Editing
               </button>

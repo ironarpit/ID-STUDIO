@@ -54,6 +54,8 @@ import { ReplenishmentView } from './components/analytics/ReplenishmentView';
 import { TopSalesSection } from './components/analytics/TopSalesSection';
 import { ReportsExportCenterView } from './components/reports/ReportsExportCenterView';
 import { AnalyticsTable } from './components/analytics/AnalyticsTable';
+import { StockVariationsView } from './components/analytics/StockVariationsView';
+import { loadStockVariations, enrichProductsWithVariations, StockVariation } from './utils/stockVariations';
 import { FloorAuditHub } from './components/audit/FloorAuditHub';
 import { FloorAuditRunner } from './components/audit/FloorAuditRunner';
 import { FlaggedFollowUpView } from './components/audit/FlaggedFollowUpView';
@@ -108,6 +110,11 @@ const STORAGE_KEY_CLEARED = 'stockscan_cleared_v1';
 
 export default function App() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [stockVariations, setStockVariations] = useState<Record<string, StockVariation>>(loadStockVariations);
+
+  const effectiveProducts = useMemo(() => {
+    return enrichProductsWithVariations(products, stockVariations);
+  }, [products, stockVariations]);
   const [reportMeta, setReportMeta] = useState<StockReportMeta | null>(null);
   const [scanHistory, setScanHistory] = useState<ScanHistoryItem[]>([]);
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -681,14 +688,14 @@ export default function App() {
 
   // Compute Analytics Map for all SKUs using centralized engine
   const analyticsEngineResult = useMemo(() => {
-    return computeAllProductAnalytics(products, reportMeta);
+    return computeAllProductAnalytics(effectiveProducts, reportMeta);
   }, [products, reportMeta]);
 
   const analyticsMap = analyticsEngineResult.analyticsMap;
 
   // Dashboard summary metrics
   const dashboardSummary = useMemo(() => {
-    return computeDashboardSummary(products, analyticsMap);
+    return computeDashboardSummary(effectiveProducts, analyticsMap);
   }, [products, analyticsMap]);
 
   // Lightweight Version Check & Server Stock Sync (Server JSON is Single Source of Truth)
@@ -2112,7 +2119,16 @@ export default function App() {
               />
             )}
 
-            {currentView === 'all_products' && (
+            {currentView === 'stock_variations' && (
+  <StockVariationsView
+    products={effectiveProducts}
+    analyticsMap={analyticsMap}
+    onSelectProduct={(p) => setInspectProduct(p)}
+    isDarkMode={isDarkMode}
+  />
+)}
+
+{currentView === 'all_products' && (
               <AnalyticsTable
                 title="Full Product Catalog Table"
                 description={`Total ${products.length.toLocaleString('en-IN')} SKUs in active stock memory`}

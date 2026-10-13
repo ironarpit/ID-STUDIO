@@ -96,18 +96,23 @@ export const NearExpiryCurrentFortnight: React.FC<NearExpiryCurrentFortnightProp
 
   const todayDateStr = useMemo(() => formatDateYYYYMMDD(new Date()), []);
 
-  // Available Main Codes
+  // Bidirectional Linked Main Codes (filtered by selectedCategory if active)
   const availableMainCodes = useMemo(() => {
     const codes = new Set<string>();
     items.forEach((it) => {
+      if (selectedCategory !== 'ALL' && it.category?.trim().toLowerCase() !== selectedCategory.trim().toLowerCase()) return;
       if (it.mainCode) {
         codes.add(normalizeMainCode(it.mainCode));
       }
     });
+    // Ensure selectedMainCode remains present even if 0 matches
+    if (selectedMainCode !== 'ALL' && !codes.has(selectedMainCode)) {
+      codes.add(selectedMainCode);
+    }
     return Array.from(codes).sort();
-  }, [items]);
+  }, [items, selectedCategory, selectedMainCode]);
 
-  // Dependent Categories based on selected Main Code
+  // Bidirectional Linked Categories (filtered by selectedMainCode if active)
   const availableCategories = useMemo(() => {
     const cats = new Set<string>();
     items.forEach((it) => {
@@ -118,8 +123,12 @@ export const NearExpiryCurrentFortnight: React.FC<NearExpiryCurrentFortnightProp
         cats.add(it.category.trim());
       }
     });
+    // Ensure selectedCategory remains present even if 0 matches
+    if (selectedCategory !== 'ALL' && !cats.has(selectedCategory)) {
+      cats.add(selectedCategory);
+    }
     return Array.from(cats).sort();
-  }, [items, selectedMainCode]);
+  }, [items, selectedMainCode, selectedCategory]);
 
   // Counts for Floor Removal Filter badges
   const floorRemovalCounts = useMemo(() => {
@@ -654,7 +663,6 @@ export const NearExpiryCurrentFortnight: React.FC<NearExpiryCurrentFortnightProp
               value={selectedMainCode}
               onChange={(e) => {
                 setSelectedMainCode(e.target.value);
-                setSelectedCategory('ALL'); // Reset dependent category
               }}
               className={`w-full px-2.5 py-1.5 rounded-lg border text-xs font-semibold ${
                 isDarkMode

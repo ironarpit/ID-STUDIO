@@ -12,6 +12,8 @@ import {
 } from '../../utils/analytics';
 import { getUniqueMainCodes, matchesMainCodeFilter, deriveCategoriesFromProducts, matchesCategoryFilter, getValidSelectedCategories } from '../../utils/mainCode';
 import { MultiSelectDropdown } from '../MultiSelectDropdown';
+import { ActiveFilterChips } from '../ActiveFilterChips';
+import { computeLinkedClassificationOptions } from '../../utils/linkedFilters';
 import {
   Tags,
   Briefcase,
@@ -73,8 +75,8 @@ export const CategoryBrandSupplierIntelligenceView: React.FC<CategoryBrandSuppli
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedMainCodes, setSelectedMainCodes] = useState<string[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
-  const [selectedBrand, setSelectedBrand] = useState<string>('all');
-  const [selectedSupplier, setSelectedSupplier] = useState<string>('all');
+  const [selectedBrands, setSelectedBrands] = useState<string[]>([]);
+  const [selectedSuppliers, setSelectedSuppliers] = useState<string[]>([]);
   const [selectedStockStatus, setSelectedStockStatus] = useState<string>('all');
   const [selectedMovementStatus, setSelectedMovementStatus] = useState<string>('all');
 
@@ -152,68 +154,21 @@ export const CategoryBrandSupplierIntelligenceView: React.FC<CategoryBrandSuppli
   const [tablePage, setTablePage] = useState<number>(1);
   const pageSize = 25;
 
-  // Filter options list derivation
-  const mainCodesList = useMemo(() => getUniqueMainCodes(products), [products]);
-
-  const categoriesList = useMemo(() => {
-    return deriveCategoriesFromProducts(products, selectedMainCodes);
-  }, [products, selectedMainCodes]);
-
-  // Purge selected categories if no longer available under selected MainCodes
-  useEffect(() => {
-    if (selectedCategories.length > 0) {
-      const valid = getValidSelectedCategories(selectedCategories, categoriesList);
-      if (valid.length !== selectedCategories.length) {
-        setSelectedCategories(valid);
-      }
-    }
-  }, [categoriesList, selectedCategories]);
-
-  const brandsList = useMemo(() => {
-    const set = new Set<string>();
-    products.forEach((p) => {
-      if (selectedMainCodes.length > 0 && !matchesMainCodeFilter(p.mainCode, selectedMainCodes)) return;
-      const b = getProductBrand(p) || 'Unknown / Not Available';
-      set.add(b);
-    });
-    return Array.from(set).sort();
-  }, [products, selectedMainCodes]);
-
-  const suppliersList = useMemo(() => {
-    const set = new Set<string>();
-    products.forEach((p) => {
-      if (selectedMainCodes.length > 0 && !matchesMainCodeFilter(p.mainCode, selectedMainCodes)) return;
-      const s = (p.supplierName && p.supplierName.trim()) ? p.supplierName.trim() : 'Unknown / Not Available';
-      set.add(s);
-    });
-    return Array.from(set).sort();
-  }, [products, selectedMainCodes]);
-
-  // Master Filtered Product Set (Centralized calculation engine reuse)
-  const filteredProducts = useMemo(() => {
-    return products.filter((p) => {
-      if (selectedMainCodes.length > 0 && !matchesMainCodeFilter(p.mainCode, selectedMainCodes)) return false;
-
-      const pCat = (p.category && p.category.trim()) ? p.category.trim() : 'Unknown / Not Available';
-      if (selectedCategories.length > 0 && !matchesCategoryFilter(p.category, selectedCategories)) return false;
-
-      const pBrand = getProductBrand(p) || 'Unknown / Not Available';
-      if (selectedBrand !== 'all' && pBrand !== selectedBrand) return false;
-
-      const pSupp = (p.supplierName && p.supplierName.trim()) ? p.supplierName.trim() : 'Unknown / Not Available';
-      if (selectedSupplier !== 'all' && pSupp !== selectedSupplier) return false;
-
+  // Base predicate for search, stock status, and movement velocity
+  const basePredicate = useMemo(() => {
+    return (p: Product) => {
       const calc = analyticsMap.get(p.id);
       if (selectedStockStatus !== 'all') {
         if (!calc || calc.stockStatus !== selectedStockStatus) return false;
       }
-
       if (selectedMovementStatus !== 'all') {
         if (!calc || calc.movementStatus !== selectedMovementStatus) return false;
       }
-
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
+        const pCat = (p.category && p.category.trim()) ? p.category.trim() : 'Unknown / Not Available';
+        const pBrand = getProductBrand(p) || 'Unknown / Not Available';
+        const pSupp = (p.supplierName && p.supplierName.trim()) ? p.supplierName.trim() : 'Unknown / Not Available';
         const matchName = p.name.toLowerCase().includes(q);
         const matchCode = (p.barcode && p.barcode.toLowerCase().includes(q)) || (p.localCode && p.localCode.toLowerCase().includes(q));
         const matchCat = pCat.toLowerCase().includes(q);
@@ -221,10 +176,35 @@ export const CategoryBrandSupplierIntelligenceView: React.FC<CategoryBrandSuppli
         const matchSupp = pSupp.toLowerCase().includes(q);
         if (!matchName && !matchCode && !matchCat && !matchBrand && !matchSupp) return false;
       }
-
       return true;
-    });
-  }, [products, analyticsMap, selectedMainCodes, selectedCategories, selectedBrand, selectedSupplier, selectedStockStatus, selectedMovementStatus, searchQuery]);
+    };
+  }, [analyticsMap, selectedStockStatus, selectedMovementStatus, searchQuery]);
+
+  // Bidirectional linked options computation: MainCode, Category, Brand, Supplier
+  const linkedResult = useMemo(() => {
+    return computeLinkedClassificationOptions(
+      products,
+      {
+        getMainCode: (p) => p.mainCode,
+        getCategory: (p) => p.category,
+        getBrand: (p) => getProductBrand(p) || 'Unknown / Not Available',
+        getSupplier: (p) => p.supplierName || 'Unknown / Not Available'
+      },
+      {
+        mainCodes: selectedMainCodes,
+        categories: selectedCategories,
+        brands: selectedBrands,
+        suppliers: selectedSuppliers
+      },
+      basePredicate
+    );
+  }, [products, selectedMainCodes, selectedCategories, selectedBrands, selectedSuppliers, basePredicate]);
+
+  const filteredProducts = linkedResult.filteredItems;
+  const mainCodesList = linkedResult.mainCodeOptions;
+  const categoriesList = linkedResult.categoryOptions;
+  const brandsList = linkedResult.brandOptions;
+  const suppliersList = linkedResult.supplierOptions;
 
   // 1. Category Summaries Computation
   const categorySummaries = useMemo(() => {
@@ -344,8 +324,8 @@ export const CategoryBrandSupplierIntelligenceView: React.FC<CategoryBrandSuppli
     setSearchQuery('');
     setSelectedMainCodes([]);
     setSelectedCategories([]);
-    setSelectedBrand('all');
-    setSelectedSupplier('all');
+    setSelectedBrands([]);
+    setSelectedSuppliers([]);
     setSelectedStockStatus('all');
     setSelectedMovementStatus('all');
     setTablePage(1);
@@ -509,18 +489,9 @@ export const CategoryBrandSupplierIntelligenceView: React.FC<CategoryBrandSuppli
             Non-Core
           </button>
 
-          {(selectedMainCodes.length > 0 || selectedCategories.length > 0 || selectedBrand !== 'all' || selectedSupplier !== 'all' || selectedStockStatus !== 'all' || selectedMovementStatus !== 'all' || searchQuery.trim()) && (
+          {(selectedMainCodes.length > 0 || selectedCategories.length > 0 || selectedBrands.length > 0 || selectedSuppliers.length > 0 || selectedStockStatus !== 'all' || selectedMovementStatus !== 'all' || searchQuery.trim()) && (
             <button
-              onClick={() => {
-                setSelectedMainCodes([]);
-                setSelectedCategories([]);
-                setSelectedBrand('all');
-                setSelectedSupplier('all');
-                setSelectedStockStatus('all');
-                setSelectedMovementStatus('all');
-                setSearchQuery('');
-                setTablePage(1);
-              }}
+              onClick={handleResetFilters}
               className="text-xs text-rose-600 dark:text-rose-400 font-bold hover:bg-rose-50 dark:hover:bg-rose-950/50 border border-rose-200 dark:border-rose-800 px-2.5 py-1 rounded-lg flex items-center gap-1 cursor-pointer shrink-0"
             >
               <X className="w-3 h-3" /> Reset Filters
@@ -573,35 +544,37 @@ export const CategoryBrandSupplierIntelligenceView: React.FC<CategoryBrandSuppli
             badgeColor="emerald"
           />
 
-          {/* 4. Brand */}
-          <div className="flex items-center bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 py-1.5">
-            <Briefcase className="w-3.5 h-3.5 text-purple-500 mr-1.5 shrink-0" />
-            <select
-              value={selectedBrand}
-              onChange={(e) => setSelectedBrand(e.target.value)}
-              className="bg-transparent text-xs text-slate-800 dark:text-slate-200 focus:outline-none w-full font-semibold truncate cursor-pointer"
-            >
-              <option value="all">Brand: All ({brandsList.length})</option>
-              {brandsList.map((b) => (
-                <option key={b} value={b}>{b}</option>
-              ))}
-            </select>
-          </div>
+          {/* 4. Brand (MultiSelect) */}
+          <MultiSelectDropdown
+            label="Brand"
+            options={brandsList}
+            selectedValues={selectedBrands}
+            onChange={(vals) => {
+              setSelectedBrands(vals);
+              setTablePage(1);
+            }}
+            placeholder="All"
+            searchPlaceholder="Search brands..."
+            icon={<Briefcase className="w-3.5 h-3.5 text-purple-500 mr-1 shrink-0" />}
+            isDarkMode={isDarkMode}
+            badgeColor="purple"
+          />
 
-          {/* 5. Supplier */}
-          <div className="flex items-center bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 py-1.5">
-            <Truck className="w-3.5 h-3.5 text-amber-500 mr-1.5 shrink-0" />
-            <select
-              value={selectedSupplier}
-              onChange={(e) => setSelectedSupplier(e.target.value)}
-              className="bg-transparent text-xs text-slate-800 dark:text-slate-200 focus:outline-none w-full font-semibold truncate cursor-pointer"
-            >
-              <option value="all">Supplier: All ({suppliersList.length})</option>
-              {suppliersList.map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
-          </div>
+          {/* 5. Supplier (MultiSelect) */}
+          <MultiSelectDropdown
+            label="Supplier"
+            options={suppliersList}
+            selectedValues={selectedSuppliers}
+            onChange={(vals) => {
+              setSelectedSuppliers(vals);
+              setTablePage(1);
+            }}
+            placeholder="All"
+            searchPlaceholder="Search suppliers..."
+            icon={<Truck className="w-3.5 h-3.5 text-amber-500 mr-1 shrink-0" />}
+            isDarkMode={isDarkMode}
+            badgeColor="amber"
+          />
 
           {/* 6. Stock Status */}
           <div className="flex items-center bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 py-1.5">
@@ -636,47 +609,71 @@ export const CategoryBrandSupplierIntelligenceView: React.FC<CategoryBrandSuppli
           </div>
         </div>
 
-        {/* Active Filter Badges */}
-        {(selectedMainCodes.length > 0 || selectedCategories.length > 0) && (
-          <div className="flex items-center gap-1.5 flex-wrap pt-1 text-[11px] border-t border-slate-100 dark:border-slate-700/50">
-            <span className="font-bold text-slate-400 mr-1">Active:</span>
-            {selectedMainCodes.map((code) => (
-              <span
-                key={code}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-extrabold"
-              >
-                <span>MainCode: {code}</span>
-                <button
-                  onClick={() => {
-                    setSelectedMainCodes(selectedMainCodes.filter((c) => c !== code));
-                    setTablePage(1);
-                  }}
-                  className="hover:text-rose-600 cursor-pointer"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </span>
-            ))}
-
-            {selectedCategories.map((cat) => (
-              <span
-                key={cat}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 font-bold"
-              >
-                <span>Category: {cat}</span>
-                <button
-                  onClick={() => {
-                    setSelectedCategories(selectedCategories.filter((c) => c !== cat));
-                    setTablePage(1);
-                  }}
-                  className="hover:text-rose-600 cursor-pointer"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
+        {/* Reusable Linked Active Filter Chips */}
+        <ActiveFilterChips
+          groups={[
+            {
+              label: 'MainCode',
+              values: selectedMainCodes,
+              onRemove: (v) => {
+                setSelectedMainCodes(selectedMainCodes.filter((c) => c !== v));
+                setTablePage(1);
+              },
+              onClear: () => {
+                setSelectedMainCodes([]);
+                setTablePage(1);
+              },
+              badgeColor: 'indigo',
+              incompatibleValues: mainCodesList.filter((o) => o.incompatible).map((o) => o.value)
+            },
+            {
+              label: 'Category',
+              values: selectedCategories,
+              onRemove: (v) => {
+                setSelectedCategories(selectedCategories.filter((c) => c !== v));
+                setTablePage(1);
+              },
+              onClear: () => {
+                setSelectedCategories([]);
+                setTablePage(1);
+              },
+              badgeColor: 'emerald',
+              incompatibleValues: categoriesList.filter((o) => o.incompatible).map((o) => o.value)
+            },
+            {
+              label: 'Brand',
+              values: selectedBrands,
+              onRemove: (v) => {
+                setSelectedBrands(selectedBrands.filter((b) => b !== v));
+                setTablePage(1);
+              },
+              onClear: () => {
+                setSelectedBrands([]);
+                setTablePage(1);
+              },
+              badgeColor: 'purple',
+              incompatibleValues: brandsList.filter((o) => o.incompatible).map((o) => o.value)
+            },
+            {
+              label: 'Supplier',
+              values: selectedSuppliers,
+              onRemove: (v) => {
+                setSelectedSuppliers(selectedSuppliers.filter((s) => s !== v));
+                setTablePage(1);
+              },
+              onClear: () => {
+                setSelectedSuppliers([]);
+                setTablePage(1);
+              },
+              badgeColor: 'amber',
+              incompatibleValues: suppliersList.filter((o) => o.incompatible).map((o) => o.value)
+            }
+          ]}
+          onResetAll={handleResetFilters}
+          totalFilteredCount={filteredProducts.length}
+          totalItemCount={products.length}
+          isDarkMode={isDarkMode}
+        />
       </div>
 
       {/* ======================================================== */}

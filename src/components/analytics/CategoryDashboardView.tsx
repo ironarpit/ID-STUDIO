@@ -313,6 +313,7 @@ export const CategoryDashboardView: React.FC<CategoryDashboardViewProps> = ({
           </div>
         ))}
       </div>
+      )}
     </div>
   );
 };

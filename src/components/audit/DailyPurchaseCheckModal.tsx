@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, forwardRef, useImperativeHandle } from 'react';
 import {
   X,
   CheckCircle2,
@@ -17,7 +17,7 @@ import {
   Calendar,
   Package
 } from 'lucide-react';
-import { AuditProductResult, DailyPurchaseSupplierEntry, Product } from '../../types';
+import { AuditProductResult, DailyPurchaseSupplierEntry, Product, AuditCheckFormHandle } from '../../types';
 import { cleanDateOnly, formatCleanSalesPeriod } from '../../utils/fileParser';
 
 interface DailyPurchaseCheckModalProps {
@@ -39,7 +39,7 @@ interface DailyPurchaseCheckModalProps {
   onViewStockIqDetails?: () => void;
 }
 
-export const DailyPurchaseCheckModal: React.FC<DailyPurchaseCheckModalProps> = ({
+export const DailyPurchaseCheckModal = forwardRef<AuditCheckFormHandle, DailyPurchaseCheckModalProps>(({
   isOpen,
   result,
   liveProduct,
@@ -52,7 +52,7 @@ export const DailyPurchaseCheckModal: React.FC<DailyPurchaseCheckModalProps> = (
   onDirtyChange,
   onSave,
   onViewStockIqDetails
-}) => {
+}, ref) => {
   if (!isOpen || !result) return null;
 
   // Answers State (Do not preselect Yes!)
@@ -149,8 +149,8 @@ export const DailyPurchaseCheckModal: React.FC<DailyPurchaseCheckModalProps> = (
     return true;
   };
 
-  const handleSaveCheck = async (isNext: boolean) => {
-    if (!validateAnswers()) return;
+  const handleSaveCheck = async (isNext: boolean): Promise<boolean> => {
+    if (!validateAnswers()) return false;
 
     setIsSaving(true);
     try {
@@ -205,14 +205,23 @@ export const DailyPurchaseCheckModal: React.FC<DailyPurchaseCheckModalProps> = (
       const saved = await onSave(extraFields, newStatus, isNext);
       if (saved) {
         onDirtyChange?.(false);
+        return true;
       }
-    } catch (err) {
+      return false;
+    } catch (err: any) {
       console.error('Failed to save check result:', err);
-      setValidationError('Failed to save. Please try again.');
+      setValidationError(err?.message || 'Failed to save. Please try again.');
+      return false;
     } finally {
       setIsSaving(false);
     }
   };
+
+  useImperativeHandle(ref, () => ({
+    submitValidated: async (advanceToNext: boolean) => {
+      return await handleSaveCheck(advanceToNext);
+    }
+  }));
 
   const purQty = result.purchasedQty ?? result.purchaseQty ?? 0;
   const freeQty = result.freeQty ?? 0;
@@ -680,4 +689,6 @@ export const DailyPurchaseCheckModal: React.FC<DailyPurchaseCheckModalProps> = (
       </div>
     </div>
   );
-};
+});
+
+DailyPurchaseCheckModal.displayName = 'DailyPurchaseCheckModal';

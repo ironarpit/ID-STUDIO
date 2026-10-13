@@ -127,22 +127,31 @@ export const FocusProductListView: React.FC<FocusProductListViewProps> = ({
     }
   };
 
-  // Extract unique categories & brands for filtering
+  // Bidirectional linked categories (filtered by selectedBrand if active)
   const categories = useMemo(() => {
     const set = new Set<string>();
     evaluatedProducts.forEach(m => {
-      if (m.category) set.add(m.category);
+      if (selectedBrand !== 'all' && (m.brand || '').trim().toLowerCase() !== selectedBrand.trim().toLowerCase()) return;
+      if (m.category) set.add(m.category.trim());
     });
+    if (selectedCategory !== 'all' && !set.has(selectedCategory)) {
+      set.add(selectedCategory);
+    }
     return Array.from(set).sort();
-  }, [evaluatedProducts]);
+  }, [evaluatedProducts, selectedBrand, selectedCategory]);
 
+  // Bidirectional linked brands (filtered by selectedCategory if active)
   const brands = useMemo(() => {
     const set = new Set<string>();
     evaluatedProducts.forEach(m => {
-      if (m.brand) set.add(m.brand);
+      if (selectedCategory !== 'all' && (m.category || '').trim().toLowerCase() !== selectedCategory.trim().toLowerCase()) return;
+      if (m.brand) set.add(m.brand.trim());
     });
+    if (selectedBrand !== 'all' && !set.has(selectedBrand)) {
+      set.add(selectedBrand);
+    }
     return Array.from(set).sort();
-  }, [evaluatedProducts]);
+  }, [evaluatedProducts, selectedCategory, selectedBrand]);
 
   // Filtered product items
   const filteredProducts = useMemo(() => {
