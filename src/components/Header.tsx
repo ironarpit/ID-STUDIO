@@ -13,6 +13,7 @@ import {
 import { AppMode, StockReportMeta, AnalyticsViewType } from '../types';
 import { StoreInfo } from '../utils/api';
 import { forceAppUpdate } from '../utils/appUpdater';
+import { isAndroidNative } from '../utils/platform';
 import idStudioIcon from '../assets/images/id_studio_icon.png';
 
 interface HeaderProps {
@@ -51,8 +52,10 @@ export const Header: React.FC<HeaderProps> = ({
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isUpdatingApp, setIsUpdatingApp] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const isNativeAndroid = isAndroidNative();
 
   const handleUpdateApp = async () => {
+    if (isNativeAndroid) return;
     setIsUpdatingApp(true);
     await forceAppUpdate();
   };
@@ -124,16 +127,18 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* Desktop Right Utilities (Hidden on mobile) */}
           <div className="hidden md:flex items-center gap-1.5 shrink-0">
-            {/* Force Update App Button (Hard Refresh without data loss) */}
-            <button
-              onClick={handleUpdateApp}
-              disabled={isUpdatingApp}
-              className="px-2.5 py-1.5 bg-indigo-50 dark:bg-indigo-950/70 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800/80 text-indigo-700 dark:text-indigo-300 rounded-lg text-xs font-bold transition-all cursor-pointer active:scale-95 flex items-center gap-1.5 disabled:opacity-50"
-              title="Force Update App (Fetches latest published changes without deleting your uploaded data)"
-            >
-              <RotateCcw className={`w-3.5 h-3.5 ${isUpdatingApp ? 'animate-spin text-indigo-500' : ''}`} />
-              <span>{isUpdatingApp ? 'Updating...' : 'Update App'}</span>
-            </button>
+            {/* Force Update App Button (Hard Refresh without data loss - Web/PWA only) */}
+            {!isNativeAndroid && (
+              <button
+                onClick={handleUpdateApp}
+                disabled={isUpdatingApp}
+                className="px-2.5 py-1.5 bg-indigo-50 dark:bg-indigo-950/70 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 border border-indigo-200 dark:border-indigo-800/80 text-indigo-700 dark:text-indigo-300 rounded-lg text-xs font-bold transition-all cursor-pointer active:scale-95 flex items-center gap-1.5 disabled:opacity-50"
+                title="Force Update App (Fetches latest published changes without deleting your uploaded data)"
+              >
+                <RotateCcw className={`w-3.5 h-3.5 ${isUpdatingApp ? 'animate-spin text-indigo-500' : ''}`} />
+                <span>{isUpdatingApp ? 'Updating...' : 'Update App'}</span>
+              </button>
+            )}
 
             {/* Live Sync / Refresh Button */}
             {onRefresh && (
@@ -175,17 +180,19 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Mobile 3-Dot Floating Dropdown */}
             {isMobileMenuOpen && (
               <div className="absolute right-0 top-full mt-1 w-52 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl py-1.5 z-50 text-xs font-medium space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
-                <button
-                  onClick={() => {
-                    setIsMobileMenuOpen(false);
-                    handleUpdateApp();
-                  }}
-                  disabled={isUpdatingApp}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 text-left transition-colors cursor-pointer disabled:opacity-50 font-bold"
-                >
-                  <RotateCcw className={`w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0 ${isUpdatingApp ? 'animate-spin' : ''}`} />
-                  <span>{isUpdatingApp ? 'Updating App...' : 'Update App (Hard Refresh)'}</span>
-                </button>
+                {!isNativeAndroid && (
+                  <button
+                    onClick={() => {
+                      setIsMobileMenuOpen(false);
+                      handleUpdateApp();
+                    }}
+                    disabled={isUpdatingApp}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 text-left transition-colors cursor-pointer disabled:opacity-50 font-bold"
+                  >
+                    <RotateCcw className={`w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0 ${isUpdatingApp ? 'animate-spin' : ''}`} />
+                    <span>{isUpdatingApp ? 'Updating App...' : 'Update App (Hard Refresh)'}</span>
+                  </button>
+                )}
 
                 {onRefresh && (
                   <button

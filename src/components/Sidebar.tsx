@@ -42,6 +42,7 @@ import {
 import { AnalyticsViewType, AppMode, StockReportMeta } from '../types';
 import { RetailDashboardSummary } from '../utils/analytics';
 import { forceAppUpdate } from '../utils/appUpdater';
+import { isAndroidNative } from '../utils/platform';
 import idStudioIcon from '../assets/images/id_studio_icon.png';
 
 interface SidebarProps {
@@ -103,17 +104,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
   nonCoreCheckStatus = 'none'
 }) => {
   // PWA Install Prompt State
+  const isNativeAndroid = isAndroidNative();
   const [deferredPrompt, setDeferredPrompt] = useState<any>((window as any).deferredPWAInstallPrompt || null);
-  const [isAppInstalled, setIsAppInstalled] = useState(false);
+  const [isAppInstalled, setIsAppInstalled] = useState(isNativeAndroid);
   const [showiOSInstructions, setShowiOSInstructions] = useState(false);
   const [isUpdatingApp, setIsUpdatingApp] = useState(false);
 
   const handleUpdateApp = async () => {
+    if (isNativeAndroid) return;
     setIsUpdatingApp(true);
     await forceAppUpdate();
   };
 
   useEffect(() => {
+    if (isNativeAndroid) {
+      setIsAppInstalled(true);
+      return;
+    }
+
     if (typeof window !== 'undefined') {
       const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true;
       if (isStandalone) {
@@ -140,9 +148,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('appinstalled', handleAppInstalled);
     };
-  }, []);
+  }, [isNativeAndroid]);
 
   const handleInstallClick = async () => {
+    if (isNativeAndroid) return;
     const promptEvent = deferredPrompt || (window as any).deferredPWAInstallPrompt;
     if (promptEvent) {
       promptEvent.prompt();
@@ -576,17 +585,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="flex items-center justify-between gap-1 pt-0.5">
             {(!isCollapsed || isMobileOpen) ? (
               <>
-                <button
-                  onClick={handleUpdateApp}
-                  disabled={isUpdatingApp}
-                  className={`flex-1 flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-lg text-[11px] font-bold transition-colors cursor-pointer ${
-                    isDarkMode ? 'text-indigo-400 bg-indigo-950/40 hover:bg-indigo-950/70 border border-indigo-900/60' : 'text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200'
-                  }`}
-                  title="Force Update App (Fetches latest published changes without deleting your uploaded data)"
-                >
-                  <RefreshCw className={`w-3 h-3 ${isUpdatingApp ? 'animate-spin' : ''}`} />
-                  <span>{isUpdatingApp ? '...' : 'Update'}</span>
-                </button>
+                {!isNativeAndroid && (
+                  <button
+                    onClick={handleUpdateApp}
+                    disabled={isUpdatingApp}
+                    className={`flex-1 flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-lg text-[11px] font-bold transition-colors cursor-pointer ${
+                      isDarkMode ? 'text-indigo-400 bg-indigo-950/40 hover:bg-indigo-950/70 border border-indigo-900/60' : 'text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200'
+                    }`}
+                    title="Force Update App (Fetches latest published changes without deleting your uploaded data)"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isUpdatingApp ? 'animate-spin' : ''}`} />
+                    <span>{isUpdatingApp ? '...' : 'Update'}</span>
+                  </button>
+                )}
 
                 <button
                   onClick={onToggleDarkMode}
@@ -598,15 +609,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   {isDarkMode ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
                 </button>
 
-                <button
-                  onClick={handleInstallClick}
-                  className={`p-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-                    isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'
-                  }`}
-                  title="Install Standalone App"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                </button>
+                {!isNativeAndroid && (
+                  <button
+                    onClick={handleInstallClick}
+                    className={`p-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+                      isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                    title="Install Standalone App"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                  </button>
+                )}
 
                 <button
                   onClick={onToggleCollapse}
@@ -618,16 +631,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </>
             ) : (
               <div className="w-full flex flex-col items-center gap-1">
-                <button
-                  onClick={handleUpdateApp}
-                  disabled={isUpdatingApp}
-                  className={`w-10 h-8 flex items-center justify-center rounded-lg transition-colors cursor-pointer ${
-                    isDarkMode ? 'text-indigo-400 hover:bg-slate-800' : 'text-indigo-600 hover:bg-slate-100'
-                  }`}
-                  title="Force Update App (Hard Refresh)"
-                >
-                  <RefreshCw className={`w-4 h-4 ${isUpdatingApp ? 'animate-spin' : ''}`} />
-                </button>
+                {!isNativeAndroid && (
+                  <button
+                    onClick={handleUpdateApp}
+                    disabled={isUpdatingApp}
+                    className={`w-10 h-8 flex items-center justify-center rounded-lg transition-colors cursor-pointer ${
+                      isDarkMode ? 'text-indigo-400 hover:bg-slate-800' : 'text-indigo-600 hover:bg-slate-100'
+                    }`}
+                    title="Force Update App (Hard Refresh)"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isUpdatingApp ? 'animate-spin' : ''}`} />
+                  </button>
+                )}
 
                 <button
                   onClick={onToggleDarkMode}
@@ -652,8 +667,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </aside>
 
-      {/* PWA Modal */}
-      {showiOSInstructions && (
+      {/* PWA Modal (Web/Browser only) */}
+      {!isNativeAndroid && showiOSInstructions && (
         <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-55 flex items-center justify-center p-4">
           <div className={`p-5 sm:p-6 rounded-2xl max-w-sm w-full border shadow-xl space-y-4 relative ${
             isDarkMode ? 'bg-slate-900 border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-800'

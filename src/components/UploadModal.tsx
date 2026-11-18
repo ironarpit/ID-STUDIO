@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { parseStockReportFile, convertRowsToProducts, cleanBarcode } from '../utils/fileParser';
 import { ColumnMapping, Product, StockReportMeta, UploadProgressData } from '../types';
+import { getApiBaseUrl, getApiUrl, isAndroidNative } from '../utils/platform';
 import { 
   UploadModalShell, 
   UploadDropZone, 
@@ -141,19 +142,32 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       const reader = new FileReader();
       reader.onload = async (e) => {
         try {
+          if (isAndroidNative() && !getApiBaseUrl()) {
+            throw new Error('AI image scanning requires VITE_API_BASE_URL to be configured for the Android build. Please upload CSV/Excel offline instead.');
+          }
+
           const base64Url = e.target?.result as string;
           const base64Data = base64Url.split(',')[1];
           const mimeType = selectedFile.type || 'image/jpeg';
 
-          const res = await fetch('/api/gemini/scan-invoice', {
+          const res = await fetch(getApiUrl('/api/gemini/scan-invoice'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ imageBase64: base64Data, mimeType }),
           });
 
-          const data = await res.json();
-          if (!data.success) {
-            throw new Error(data.message || 'AI failed to scan invoice.');
+          let data: any = null;
+          try {
+            data = await res.json();
+          } catch {
+            if (!res.ok) {
+              throw new Error(`AI service error (HTTP ${res.status}). Check server URL or internet connection.`);
+            }
+            throw new Error('Unexpected response from AI service.');
+          }
+
+          if (!res.ok || !data?.success) {
+            throw new Error(data?.message || `AI failed to scan invoice (HTTP ${res.status}).`);
           }
 
           if (!data.products || data.products.length === 0) {

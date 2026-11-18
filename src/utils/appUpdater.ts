@@ -1,9 +1,15 @@
+import { isAndroidNative } from './platform';
+
 /**
  * Utility to force-refresh application bundles and clear asset caches
  * WITHOUT deleting or affecting IndexedDB databases or localStorage
  * (all user uploaded Stock IQ, Focus, Near Expiry, and Barcode data remain 100% safe).
  */
 export async function forceAppUpdate(): Promise<void> {
+  if (isAndroidNative()) {
+    return;
+  }
+
   try {
     // 1. Clear CacheStorage (service worker and browser asset caches)
     if ('caches' in window) {
