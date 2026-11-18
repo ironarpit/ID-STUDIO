@@ -36,6 +36,25 @@ export interface Product {
   unit?: string;
   storeId?: string;
   rawRowData?: Record<string, any>;
+  systemStock?: number; // Immutable original system stock before any physical variations
+  stockVariation?: StockVariation;
+}
+
+export interface StockVariation {
+  id: string; // unique key: storeId_productKey
+  storeId: string;
+  productKey: string; // stable identity (bansalCode || localCode || barcode || id)
+  bansalCode?: string;
+  localCode?: string;
+  barcode?: string;
+  productName: string;
+  systemStock: number; // original system stock at count time
+  physicalStock: number; // counted physical stock (floor + warehouse)
+  adjustment: number; // physicalStock - systemStock
+  timestamp: string; // ISO date string
+  remark?: string;
+  recountNeeded?: boolean; // true if adjusted stock < 0
+  status?: 'active' | 'missing_from_upload' | 'needs_review';
 }
 
 export interface ComputedProductAnalytics {
@@ -98,7 +117,7 @@ export type AnalyticsViewType =
   | 'core_focus_check'
   | 'non_core_focus_check'
   | 'focus_flagged_issues'
-  | 'focus_history';
+  | 'focus_history'
   | 'stock_variations';
 
 export interface ColumnMapping {
@@ -260,6 +279,9 @@ export interface AuditSession {
   currentIndex?: number;
   activeChecker?: string;
   lastChecker?: string;
+  isQuickCountMode?: boolean;
+  quickCountScannedCount?: number;
+  quickCountDuplicateCount?: number;
 }
 
 export interface AuditProductResult {
@@ -341,6 +363,10 @@ export interface AuditProductResult {
   flaggedAt?: string;
   resolutionRemark?: string;
   resolvedAt?: string;
+
+  // Quick Count Mode Fields
+  isQuickCountScanned?: boolean;
+  quickCountScannedAt?: string;
 }
 
 export const LOCATION_OPTIONS: { value: LocationStatus; label: string }[] = [
@@ -373,6 +399,7 @@ export const BOARD_STATUS_OPTIONS: { value: BoardStatus; label: string }[] = [
 
 export interface AuditCheckFormHandle {
   submitValidated: (advanceToNext: boolean) => Promise<boolean>;
+  getDraftValues?: () => Partial<AuditProductResult>;
 }
 
 export const ISSUE_REASON_PRESETS: Record<AuditType, string[]> = {
@@ -962,4 +989,49 @@ export interface HoImportMatchResult {
   detectedHeaders?: string[];
 }
 
+// ==================================================
+// PURCHASE RESPONSIBILITY MASTER & CONTACT TYPES
+// ==================================================
 
+export type PurchasePhoneStatus =
+  | 'valid_indian'
+  | 'valid_international'
+  | 'missing'
+  | 'invalid'
+  | 'ambiguous';
+
+export interface PurchaseResponsibilityRecord {
+  id: string;
+  bansalCode: string; // Preserved original code string (without Excel float .0 suffix)
+  itemName: string; // Reference only; never used for automatic matching
+  purchasePersonName: string;
+  rawPhone: string;
+  phoneStatus: PurchasePhoneStatus;
+  phoneError?: string;
+  normalizedPhoneDigits?: string; // International digits without '+' (e.g. '919876543210')
+  displayPhone?: string;
+  whatsappUrl?: string; // https://wa.me/<international digits>
+  telUrl?: string; // tel:+<international digits>
+}
+
+export interface PurchaseResponsibilityMeta {
+  id: string; // 'active_purchase_master'
+  fileName: string;
+  sheetName: string;
+  importedAt: string;
+  totalRowsRead: number;
+  validAssignmentsCount: number;
+  uniqueProductCodesCount: number;
+  missingNameCount: number;
+  missingOrInvalidPhoneCount: number;
+  deduplicatedCount: number;
+  conflictingCodesCount: number;
+  storageScope: 'device_local';
+}
+
+export interface PurchaseColumnMapping {
+  bansalCode: string;
+  itemName?: string;
+  purchaseName: string;
+  phone: string;
+}

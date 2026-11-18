@@ -198,13 +198,6 @@ function getOrGenerateRemark(r: AuditProductResult): string {
  * Lazy-loads ExcelJS dynamically so initial mobile app bundle size remains compact.
  */
 export async function exportZeroSaleAuditToExcel(session: AuditSession, results: AuditProductResult[]): Promise<boolean> {
-  // Validate completion status
-  const pendingCount = results.filter(r => r.status === 'pending').length;
-  if (pendingCount > 0) {
-    alert(`Cannot export incomplete audit. ${pendingCount} pending product(s) remaining. Please complete checking all products before downloading.`);
-    return false;
-  }
-
   try {
     // Dynamic import ExcelJS to avoid increasing initial bundle size
     const ExcelJSModule = await import('exceljs');
@@ -316,23 +309,36 @@ export async function exportZeroSaleAuditToExcel(session: AuditSession, results:
       const mrp = typeof r.mrp === 'number' ? r.mrp : 0;
       const retailPrice = typeof r.retailPrice === 'number' ? r.retailPrice : (typeof r.salePrice === 'number' ? r.salePrice : 0);
 
-      const isOnFloor = r.isOnFloor === true || r.isOnFloor === 'yes' || r.locationStatus === 'on_floor' || r.locationStatus === 'both';
-      const floorStockStr = isOnFloor ? 'YES' : 'NO';
+      const isChecked = r.status === 'done' || r.status === 'resolved' || r.status === 'flagged';
 
-      let boardStatusStr = 'YES';
-      const bs = r.boardStatus as string | undefined;
-      if (bs === 'board_missing' || bs === 'missing' || bs === 'wrong_price' || bs === 'incorrect') {
-        boardStatusStr = 'NO';
-      } else if (bs === 'not_applicable' || bs === 'n_a' || bs === 'na') {
-        boardStatusStr = 'N/A';
-      } else if (bs === 'board_correct' || bs === 'correct') {
-        boardStatusStr = 'YES';
-      } else if (!isOnFloor) {
-        boardStatusStr = 'NO';
+      let floorStockStr = '';
+      let boardStatusStr = '';
+      let remarkStr = '';
+      let checkerNameStr = '';
+
+      if (isChecked) {
+        const isOnFloor = r.isOnFloor === true || r.isOnFloor === 'yes' || r.locationStatus === 'on_floor' || r.locationStatus === 'both' || r.isDisplayedOnFloor === 'yes';
+        const isNotOnFloor = r.isOnFloor === false || r.isOnFloor === 'no' || r.locationStatus === 'not_found' || r.isDisplayedOnFloor === 'no';
+        floorStockStr = isOnFloor ? 'YES' : isNotOnFloor ? 'NO' : 'NO';
+
+        const bs = (r.boardStatus as string | undefined)?.toLowerCase();
+        const bc = (r.isBoardCorrect as string | undefined)?.toLowerCase();
+        if (bs === 'board_missing' || bs === 'missing' || bs === 'wrong_price' || bs === 'incorrect' || bc === 'no') {
+          boardStatusStr = 'NO';
+        } else if (bs === 'not_applicable' || bs === 'n_a' || bs === 'na' || bc === 'not_applicable') {
+          boardStatusStr = 'N/A';
+        } else if (bs === 'board_correct' || bs === 'correct' || bc === 'yes') {
+          boardStatusStr = 'YES';
+        } else if (!isOnFloor) {
+          boardStatusStr = 'NO';
+        } else {
+          boardStatusStr = 'YES';
+        }
+
+        remarkStr = (r.remarks || r.remark || r.issueReason || '').trim();
+        checkerNameStr = (r.checkedBy || session.activeChecker || session.lastChecker || '').trim();
       }
 
-      const remarkStr = getOrGenerateRemark(r);
-      const checkerNameStr = r.checkedBy || session.activeChecker || session.lastChecker || '';
       const lpdStr = formatLPDDate(r.lastPurchaseDate);
 
       const dataRow = sheet.getRow(rowNum);
@@ -470,7 +476,8 @@ export async function exportFocusAuditToExcel(
     ];
 
     // TOP ROW TITLE
-    const isCore = session.type === 'core_focus' || session.focusType === 'core' || (session.title || '').toUpperCase().includes('CORE');
+    const isNonCore = session.type === 'non_core_focus' || session.focusType === 'non_core' || (session.title || '').toUpperCase().includes('NON-CORE') || (session.title || '').toUpperCase().includes('NON CORE');
+    const isCore = !isNonCore && (session.type === 'core_focus' || session.focusType === 'core' || (session.title || '').toUpperCase().includes('CORE'));
     const prefix = isCore ? 'CORE FOCUS OFFER CHECK LIST' : 'NON-CORE FOCUS OFFER CHECK LIST';
     const monthStr = (session.focusMonth || 'CURRENT MONTH').toUpperCase();
 
@@ -550,9 +557,10 @@ export async function exportFocusAuditToExcel(
       const itemName = r.productName || 'Unnamed Product';
       const mrpVal = typeof r.mrp === 'number' && !isNaN(r.mrp) ? r.mrp : parseFloat(String(r.mrp || 0)) || 0;
       const offerStr = r.focusOffer || r.issueReason || '';
-      const boardType = r.boardType || '';
-      const display = r.display || (r.isOnFloor === 'yes' || r.isOnFloor === true ? 'YES' : r.isOnFloor === 'no' || r.isOnFloor === false ? 'NO' : '');
-      const board = r.board || (r.boardStatus === 'board_correct' || r.boardStatus === 'correct' ? 'YES' : r.boardStatus ? 'NO' : '');
+      const isChecked = r.status === 'done' || r.status === 'resolved' || r.status === 'flagged';
+      const boardType = isChecked ? (r.boardType || '') : '';
+      const display = isChecked ? (r.display || (r.isOnFloor === 'yes' || r.isOnFloor === true ? 'YES' : r.isOnFloor === 'no' || r.isOnFloor === false ? 'NO' : '')) : '';
+      const board = isChecked ? (r.board || (r.boardStatus === 'board_correct' || r.boardStatus === 'correct' ? 'YES' : r.boardStatus ? 'NO' : '')) : '';
 
       dataRow.getCell(1).value = mainCode;
       dataRow.getCell(2).value = category;
@@ -707,36 +715,51 @@ export async function exportDailyPurchaseAuditToExcel(
         ? r.suppliersList.map((s) => `${s.supplierName} (${s.purchaseQty}${s.freeQty ? `+${s.freeQty}F` : ''})`).join('; ')
         : r.supplierName || r.supplier || 'Direct Inward';
 
-      const floorStr = r.isDisplayedOnFloor === 'yes' || r.isOnFloor === 'yes' || r.isOnFloor === true
-        ? 'YES'
-        : r.isDisplayedOnFloor === 'no' || r.isOnFloor === 'no' || r.isOnFloor === false
-        ? 'NO (NOT ON FLOOR)'
-        : 'PENDING';
+      const isChecked = r.status === 'done' || r.status === 'resolved' || r.status === 'flagged';
 
-      const boardStr = r.isBoardCorrect === 'yes' || r.boardStatus === 'board_correct' || r.boardStatus === 'correct'
-        ? 'CORRECT'
-        : r.isBoardCorrect === 'no' || r.boardStatus === 'board_missing' || r.boardStatus === 'wrong_price' || r.boardStatus === 'incorrect' || r.boardStatus === 'missing'
-        ? 'INCORRECT'
-        : r.isBoardCorrect === 'not_applicable' || r.boardStatus === 'not_applicable'
-        ? 'N/A'
-        : 'PENDING';
+      const floorStr = isChecked
+        ? (r.isDisplayedOnFloor === 'yes' || r.isOnFloor === 'yes' || r.isOnFloor === true
+          ? 'YES'
+          : r.isDisplayedOnFloor === 'no' || r.isOnFloor === 'no' || r.isOnFloor === false
+          ? 'NO (NOT ON FLOOR)'
+          : '')
+        : '';
 
-      const outcomeStr = r.dailyPurchaseOutcome || (
-        r.status === 'flagged' ? 'ACTION_REQUIRED' :
-        r.isDisplayedOnFloor === 'no' || r.isOnFloor === 'no' ? 'NOT_ON_FLOOR' :
-        r.isBoardCorrect === 'no' ? 'BOARD_INCORRECT' :
-        r.status === 'done' ? 'OK' : 'PENDING'
-      );
+      const boardStr = isChecked
+        ? (r.isBoardCorrect === 'yes' || r.boardStatus === 'board_correct' || r.boardStatus === 'correct'
+          ? 'CORRECT'
+          : r.isBoardCorrect === 'no' || r.boardStatus === 'board_missing' || r.boardStatus === 'wrong_price' || r.boardStatus === 'incorrect' || r.boardStatus === 'missing'
+          ? 'INCORRECT'
+          : r.isBoardCorrect === 'not_applicable' || r.boardStatus === 'not_applicable'
+          ? 'N/A'
+          : '')
+        : '';
 
-      const statusStr = r.status === 'done' || r.status === 'resolved'
-        ? 'CHECKED'
-        : r.status === 'flagged'
-        ? 'ACTION REQUIRED'
-        : 'PENDING';
+      const outcomeStr = isChecked
+        ? (r.dailyPurchaseOutcome || (
+            r.status === 'flagged' ? 'ACTION_REQUIRED' :
+            r.isDisplayedOnFloor === 'no' || r.isOnFloor === 'no' ? 'NOT_ON_FLOOR' :
+            r.isBoardCorrect === 'no' ? 'BOARD_INCORRECT' :
+            r.status === 'done' ? 'OK' : ''
+          ))
+        : '';
 
-      const timestampStr = r.checkedDate && r.checkedTime
-        ? `${r.checkedDate} ${r.checkedTime}`
-        : r.checkedAt || '';
+      const statusStr = isChecked
+        ? (r.status === 'done' || r.status === 'resolved'
+          ? 'CHECKED'
+          : r.status === 'flagged'
+          ? 'ACTION REQUIRED'
+          : '')
+        : '';
+
+      const issueDesc = isChecked ? (r.issueReason || '') : '';
+      const remarks = isChecked ? (r.remarks || r.remark || '') : '';
+      const checkedBy = isChecked ? (r.checkedBy || '') : '';
+      const timestampStr = isChecked
+        ? (r.checkedDate && r.checkedTime
+          ? `${r.checkedDate} ${r.checkedTime}`
+          : r.checkedAt || '')
+        : '';
 
       return [
         idx + 1,
@@ -754,9 +777,9 @@ export async function exportDailyPurchaseAuditToExcel(
         boardStr,
         outcomeStr,
         statusStr,
-        r.issueReason || '',
-        r.remarks || r.remark || '',
-        r.checkedBy || '',
+        issueDesc,
+        remarks,
+        checkedBy,
         timestampStr,
       ];
     });
@@ -798,26 +821,22 @@ export async function exportDailyPurchaseAuditToExcel(
 
 /**
  * Main export router function.
- * Automatically delegates zero_sales audits, focus audits, and daily purchase audits to specialized workbook handlers.
+ * Automatically delegates zero_sales audits, daily purchase audits, and focus audits to specialized workbook handlers.
  */
-export function exportAuditSessionToExcel(session: AuditSession, results: AuditProductResult[]) {
+export async function exportAuditSessionToExcel(session: AuditSession, results: AuditProductResult[]): Promise<boolean> {
+  const isZeroSale = session.type === 'zero_sales' || (session.title && session.title.toLowerCase().includes('zero sale'));
+  if (isZeroSale) {
+    return exportZeroSaleAuditToExcel(session, results);
+  }
+
   const isDailyPurchase = session.type === 'daily_purchase' || (session.title && session.title.toLowerCase().includes('daily purchase'));
   if (isDailyPurchase) {
-    exportDailyPurchaseAuditToExcel(session, results);
-    return;
+    return exportDailyPurchaseAuditToExcel(session, results);
   }
 
-  const isFocus = session.type === 'core_focus' || session.type === 'non_core_focus' || (session as any).focusType != null;
+  const isFocus = session.type === 'core_focus' || session.type === 'non_core_focus' || session.focusType === 'core' || session.focusType === 'non_core' || (session.title && session.title.toLowerCase().includes('focus'));
   if (isFocus) {
-    exportFocusAuditToExcel(session, results);
-    return;
-  }
-
-  const isZeroSale = session.type === 'zero_sales' || (session.title && session.title.toLowerCase().includes('zero sale'));
-
-  if (isZeroSale) {
-    exportZeroSaleAuditToExcel(session, results);
-    return;
+    return exportFocusAuditToExcel(session, results);
   }
 
   // Generic fallback multi-sheet export for other audit types
@@ -865,6 +884,7 @@ export function exportAuditSessionToExcel(session: AuditSession, results: AuditP
     const closingStock = r.stock ?? r.closingStock ?? 0;
     const costPrice = r.costPrice ?? r.cost ?? 0;
     const retailPrice = r.retailPrice ?? r.salePrice ?? 0;
+    const isChecked = r.status === 'done' || r.status === 'resolved' || r.status === 'flagged';
 
     return [
       idx + 1,
@@ -889,18 +909,18 @@ export function exportAuditSessionToExcel(session: AuditSession, results: AuditP
       closingStock * retailPrice,
       r.lastPurchaseDate || '',
       r.lastPurchaseNo || '',
-      getLocationLabel(r.locationStatus),
-      getDisplayLabel(r.displayPosition),
-      getRefillLabel(r.refillStatus),
-      getBoardLabel(r.boardStatus),
-      r.issueReason || '',
-      r.remark || '',
-      r.status.toUpperCase(),
-      r.checkedDate || '',
-      r.checkedTime || '',
-      r.flaggedAt || '',
-      r.resolutionRemark || '',
-      r.resolvedAt || ''
+      isChecked ? getLocationLabel(r.locationStatus) : '',
+      isChecked ? getDisplayLabel(r.displayPosition) : '',
+      isChecked ? getRefillLabel(r.refillStatus) : '',
+      isChecked ? getBoardLabel(r.boardStatus) : '',
+      isChecked ? (r.issueReason || '') : '',
+      isChecked ? (r.remark || r.remarks || '') : '',
+      isChecked ? r.status.toUpperCase() : '',
+      isChecked ? (r.checkedDate || '') : '',
+      isChecked ? (r.checkedTime || '') : '',
+      isChecked ? (r.flaggedAt || '') : '',
+      isChecked ? (r.resolutionRemark || '') : '',
+      isChecked ? (r.resolvedAt || '') : ''
     ];
   }
 
@@ -910,4 +930,5 @@ export function exportAuditSessionToExcel(session: AuditSession, results: AuditP
 
   const fileName = `floor_audit_${session.title.toLowerCase().replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.xlsx`;
   XLSX.writeFile(wb, fileName);
+  return true;
 }

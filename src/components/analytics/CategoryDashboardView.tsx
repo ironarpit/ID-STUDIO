@@ -22,7 +22,7 @@ export const CategoryDashboardView: React.FC<CategoryDashboardViewProps> = ({
 
   // Bidirectional linked options computation
   const linkedResult = useMemo(() => {
-    return computeLinkedClassificationOptions(
+    return computeLinkedClassificationOptions<Product>(
       products,
       {
         getMainCode: (p) => p.mainCode,

@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { Product, ComputedProductAnalytics } from '../types';
 import { getProductBrand } from '../utils/analytics';
+import { PurchaseContactButton } from './PurchaseContactSheet';
 
 export interface ProductCardProps {
   product: Product;
@@ -319,15 +320,16 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         </div>
       </div>
 
-      {/* 3. COMPACT ACTION ROW (ONE ROW) */}
-      <div className="flex items-center justify-between gap-1.5 pt-1 border-t border-slate-200/60 dark:border-slate-800">
+      {/* 3. COMPACT ACTION ROW */}
+      <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1 border-t border-slate-200/60 dark:border-slate-800">
         {/* Compact Barcode Preview */}
         <div className="flex items-center bg-white dark:bg-slate-950 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-800 shrink-0">
           <svg ref={barcodeSvgRef} className="max-w-[95px] sm:max-w-[110px] h-5"></svg>
         </div>
 
-        {/* Action Buttons: Copy, Sticker, Inspect */}
-        <div className="flex items-center gap-1 shrink-0">
+        {/* Action Buttons: Purchase Contact, Copy, Sticker, Inspect */}
+        <div className="flex flex-wrap items-center gap-1 shrink-0 ml-auto">
+          <PurchaseContactButton product={product} variant="compact" />
           <button
             type="button"
             onClick={handleCopy}

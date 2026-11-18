@@ -145,7 +145,7 @@ export const FloorAuditHub: React.FC<FloorAuditHubProps> = ({
         if (isZeroSale) {
           await exportZeroSaleAuditToExcel(s, results);
         } else {
-          exportAuditSessionToExcel(s, results);
+          await exportAuditSessionToExcel(s, results);
         }
       } else {
         alert('Could not retrieve audit session details or results.');

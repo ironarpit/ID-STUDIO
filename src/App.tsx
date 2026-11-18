@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { CheckCircle2, AlertCircle, X } from 'lucide-react';
+import { CheckCircle2, AlertCircle, X, AlertTriangle } from 'lucide-react';
 import { Header } from './components/Header';
 import { SearchInput } from './components/SearchInput';
 import { ProductCard } from './components/ProductCard';
@@ -14,6 +14,8 @@ import { AiScannerModal } from './components/AiScannerModal';
 import { Sidebar } from './components/Sidebar';
 import { Breadcrumbs, VIEW_TITLES } from './components/Breadcrumbs';
 import { ProductDetailModal } from './components/ProductDetailModal';
+import { PurchaseContactProvider } from './context/PurchaseContactContext';
+import { PurchaseContactModal } from './components/PurchaseContactSheet';
 import {
   resolveOfflineBarcode,
   resolveScannedBarcode,
@@ -112,6 +114,16 @@ export default function App() {
   const [products, setProducts] = useState<Product[]>([]);
   const [stockVariations, setStockVariations] = useState<Record<string, StockVariation>>(loadStockVariations);
 
+  // Keep stock variations synchronized across all tabs, modals, and management screens
+  useEffect(() => {
+    const handleVarChange = (e: any) => {
+      const vars = e.detail || loadStockVariations();
+      setStockVariations({ ...vars });
+    };
+    window.addEventListener('bsm_stock_variations_changed', handleVarChange);
+    return () => window.removeEventListener('bsm_stock_variations_changed', handleVarChange);
+  }, []);
+
   const effectiveProducts = useMemo(() => {
     return enrichProductsWithVariations(products, stockVariations);
   }, [products, stockVariations]);
@@ -172,28 +184,28 @@ export default function App() {
   }, [nonCoreMaster]);
 
   const coreIssuesCount = useMemo(() => {
-    if (!coreMaster?.items || products.length === 0) return 0;
-    const evaluated = evaluateFocusProductsWithLiveStock(coreMaster.items, products, reportMeta?.reportDays);
+    if (!coreMaster?.items || effectiveProducts.length === 0) return 0;
+    const evaluated = evaluateFocusProductsWithLiveStock(coreMaster.items, effectiveProducts, reportMeta?.reportDays);
     return evaluated.filter(p => p.status === 'OUT_OF_STOCK' || p.status === 'LOW_STOCK').length;
-  }, [coreMaster, products, reportMeta?.reportDays]);
+  }, [coreMaster, effectiveProducts, reportMeta?.reportDays]);
 
   const nonCoreIssuesCount = useMemo(() => {
-    if (!nonCoreMaster?.items || products.length === 0) return 0;
-    const evaluated = evaluateFocusProductsWithLiveStock(nonCoreMaster.items, products, reportMeta?.reportDays);
+    if (!nonCoreMaster?.items || effectiveProducts.length === 0) return 0;
+    const evaluated = evaluateFocusProductsWithLiveStock(nonCoreMaster.items, effectiveProducts, reportMeta?.reportDays);
     return evaluated.filter(p => p.status === 'OUT_OF_STOCK' || p.status === 'LOW_STOCK').length;
-  }, [nonCoreMaster, products, reportMeta?.reportDays]);
+  }, [nonCoreMaster, effectiveProducts, reportMeta?.reportDays]);
 
   const coreOfferMismatchCount = useMemo(() => {
-    if (!coreMaster?.items || products.length === 0) return 0;
-    const evaluated = evaluateFocusOfferProducts(coreMaster.items, products);
+    if (!coreMaster?.items || effectiveProducts.length === 0) return 0;
+    const evaluated = evaluateFocusOfferProducts(coreMaster.items, effectiveProducts);
     return evaluated.filter(p => p.offerStatus === 'MISMATCH').length;
-  }, [coreMaster, products]);
+  }, [coreMaster, effectiveProducts]);
 
   const nonCoreOfferMismatchCount = useMemo(() => {
-    if (!nonCoreMaster?.items || products.length === 0) return 0;
-    const evaluated = evaluateFocusOfferProducts(nonCoreMaster.items, products);
+    if (!nonCoreMaster?.items || effectiveProducts.length === 0) return 0;
+    const evaluated = evaluateFocusOfferProducts(nonCoreMaster.items, effectiveProducts);
     return evaluated.filter(p => p.offerStatus === 'MISMATCH').length;
-  }, [nonCoreMaster, products]);
+  }, [nonCoreMaster, effectiveProducts]);
 
   const loadFocusMastersData = async () => {
     try {
@@ -252,6 +264,10 @@ export default function App() {
   const [activeBarcode, setActiveBarcode] = useState<string>('');
   const [noProductFoundQuery, setNoProductFoundQuery] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isInspectDirty, setIsInspectDirty] = useState(false);
+  const [pendingScannedProduct, setPendingScannedProduct] = useState<Product | null>(null);
+  const [unsavedScanModalOpen, setUnsavedScanModalOpen] = useState(false);
+  const productDetailModalRef = useRef<any>(null);
 
   // Settings & Modals State
   const [isAdminSettingsOpen, setIsAdminSettingsOpen] = useState(false);
@@ -689,14 +705,14 @@ export default function App() {
   // Compute Analytics Map for all SKUs using centralized engine
   const analyticsEngineResult = useMemo(() => {
     return computeAllProductAnalytics(effectiveProducts, reportMeta);
-  }, [products, reportMeta]);
+  }, [effectiveProducts, reportMeta]);
 
   const analyticsMap = analyticsEngineResult.analyticsMap;
 
   // Dashboard summary metrics
   const dashboardSummary = useMemo(() => {
     return computeDashboardSummary(effectiveProducts, analyticsMap);
-  }, [products, analyticsMap]);
+  }, [effectiveProducts, analyticsMap]);
 
   // Lightweight Version Check & Server Stock Sync (Server JSON is Single Source of Truth)
   useEffect(() => {
@@ -948,6 +964,15 @@ export default function App() {
   const dispatchScan = async (scannedCode: string) => {
     if (!scannedCode || !scannedCode.trim()) return;
     const rawCode = scannedCode.trim();
+
+    if (inspectProduct && isInspectDirty) {
+      const resolved = await resolveScannedBarcode(rawCode, effectiveProducts);
+      if (resolved.product) {
+        setPendingScannedProduct(resolved.product);
+        setUnsavedScanModalOpen(true);
+        return;
+      }
+    }
 
     // ==========================================
     // Priority Near Expiry: Stay inside Near Expiry Hub
@@ -1742,6 +1767,7 @@ export default function App() {
   };
 
   return (
+    <PurchaseContactProvider>
     <div className={`h-screen flex flex-col font-sans antialiased overflow-hidden transition-colors ${
       isDarkMode ? 'bg-slate-950 text-slate-100' : 'bg-slate-100 text-slate-900'
     }`}>
@@ -1813,7 +1839,7 @@ export default function App() {
               isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
             }`}>
               <SearchInput
-                products={products}
+                products={effectiveProducts}
                 onSelectProduct={(p) => {
                   setSelectedProduct(p);
                   setLastSearchedProduct(p);
@@ -1946,7 +1972,7 @@ export default function App() {
               <DashboardView
                 summary={dashboardSummary}
                 onSelectView={handleNavigateView}
-                products={products}
+                products={effectiveProducts}
                 analyticsMap={analyticsMap}
                 reportMeta={reportMeta}
                 onSelectProduct={(p) => setInspectProduct(p)}
@@ -1958,7 +1984,7 @@ export default function App() {
 
             {currentView === 'replenishment' && (
               <ReplenishmentView
-                products={products}
+                products={effectiveProducts}
                 analyticsMap={analyticsMap}
                 onSelectProduct={(p) => setInspectProduct(p)}
                 isDarkMode={isDarkMode}
@@ -1968,7 +1994,7 @@ export default function App() {
 
             {currentView === 'fast_moving' && (
               <FastMovingView
-                products={products}
+                products={effectiveProducts}
                 analyticsMap={analyticsMap}
                 onSelectProduct={(p) => setInspectProduct(p)}
                 onStartFloorAudit={handleStartAuditFromAnalytics}
@@ -1978,7 +2004,7 @@ export default function App() {
 
             {currentView === 'slow_moving' && (
               <SlowMovingView
-                products={products}
+                products={effectiveProducts}
                 analyticsMap={analyticsMap}
                 onSelectProduct={(p) => setInspectProduct(p)}
                 onStartFloorAudit={handleStartAuditFromAnalytics}
@@ -1988,7 +2014,7 @@ export default function App() {
 
             {currentView === 'dead_stock' && (
               <DeadStockView
-                products={products}
+                products={effectiveProducts}
                 analyticsMap={analyticsMap}
                 onSelectProduct={(p) => setInspectProduct(p)}
                 onStartFloorAudit={handleStartAuditFromAnalytics}
@@ -1998,7 +2024,7 @@ export default function App() {
 
             {currentView === 'zero_sales' && (
               <ZeroSalesView
-                products={products}
+                products={effectiveProducts}
                 analyticsMap={analyticsMap}
                 onSelectProduct={(p) => setInspectProduct(p)}
                 onStartFloorAudit={handleStartAuditFromAnalytics}
@@ -2008,7 +2034,7 @@ export default function App() {
 
             {currentView === 'overstock' && (
               <OverstockView
-                products={products}
+                products={effectiveProducts}
                 analyticsMap={analyticsMap}
                 onSelectProduct={(p) => setInspectProduct(p)}
                 onStartFloorAudit={handleStartAuditFromAnalytics}
@@ -2018,7 +2044,7 @@ export default function App() {
 
             {currentView === 'low_stock' && (
               <LowStockView
-                products={products}
+                products={effectiveProducts}
                 analyticsMap={analyticsMap}
                 onSelectProduct={(p) => setInspectProduct(p)}
                 onStartFloorAudit={handleStartAuditFromAnalytics}
@@ -2028,7 +2054,7 @@ export default function App() {
 
             {currentView === 'out_of_stock' && (
               <OutOfStockView
-                products={products}
+                products={effectiveProducts}
                 analyticsMap={analyticsMap}
                 onSelectProduct={(p) => setInspectProduct(p)}
                 onStartFloorAudit={handleStartAuditFromAnalytics}
@@ -2038,7 +2064,7 @@ export default function App() {
 
             {currentView === 'inventory_value' && (
               <InventoryValueView
-                products={products}
+                products={effectiveProducts}
                 analyticsMap={analyticsMap}
                 onSelectProduct={(p) => setInspectProduct(p)}
                 onStartFloorAudit={handleStartAuditFromAnalytics}
@@ -2048,7 +2074,7 @@ export default function App() {
 
             {currentView === 'category_dash' && (
               <CategoryBrandSupplierIntelligenceView
-                products={products}
+                products={effectiveProducts}
                 analyticsMap={analyticsMap}
                 initialTab="category"
                 onSelectProduct={(p) => setInspectProduct(p)}
@@ -2059,7 +2085,7 @@ export default function App() {
 
             {currentView === 'brand_dash' && (
               <CategoryBrandSupplierIntelligenceView
-                products={products}
+                products={effectiveProducts}
                 analyticsMap={analyticsMap}
                 initialTab="brand"
                 onSelectProduct={(p) => setInspectProduct(p)}
@@ -2070,7 +2096,7 @@ export default function App() {
 
             {currentView === 'supplier_dash' && (
               <CategoryBrandSupplierIntelligenceView
-                products={products}
+                products={effectiveProducts}
                 analyticsMap={analyticsMap}
                 initialTab="supplier"
                 onSelectProduct={(p) => setInspectProduct(p)}
@@ -2081,7 +2107,7 @@ export default function App() {
 
             {currentView === 'abc_analysis' && (
               <AbcAnalysisView
-                products={products}
+                products={effectiveProducts}
                 analyticsMap={analyticsMap}
                 onSelectProduct={(p) => setInspectProduct(p)}
                 onStartFloorAudit={handleStartAuditFromAnalytics}
@@ -2091,7 +2117,7 @@ export default function App() {
 
             {currentView === 'margin_analysis' && (
               <MarginAnalysisView
-                products={products}
+                products={effectiveProducts}
                 analyticsMap={analyticsMap}
                 onSelectProduct={(p) => setInspectProduct(p)}
                 onStartFloorAudit={handleStartAuditFromAnalytics}
@@ -2101,7 +2127,7 @@ export default function App() {
 
             {currentView === 'stock_age' && (
               <StockAgeView
-                products={products}
+                products={effectiveProducts}
                 analyticsMap={analyticsMap}
                 onSelectProduct={(p) => setInspectProduct(p)}
                 onStartFloorAudit={handleStartAuditFromAnalytics}
@@ -2111,7 +2137,7 @@ export default function App() {
 
             {currentView === 'ai_recommendations' && (
               <AiRecommendationsView
-                products={products}
+                products={effectiveProducts}
                 analyticsMap={analyticsMap}
                 onSelectProduct={(p) => setInspectProduct(p)}
                 onStartFloorAudit={handleStartAuditFromAnalytics}
@@ -2132,7 +2158,7 @@ export default function App() {
               <AnalyticsTable
                 title="Full Product Catalog Table"
                 description={`Total ${products.length.toLocaleString('en-IN')} SKUs in active stock memory`}
-                products={products}
+                products={effectiveProducts}
                 analyticsMap={analyticsMap}
                 onSelectProduct={(p) => setInspectProduct(p)}
                 onStartFloorAudit={(prods) => handleStartAuditFromAnalytics('Full Catalog Floor Audit', 'random', prods)}
@@ -2142,7 +2168,7 @@ export default function App() {
 
             {currentView === 'reports' && (
               <ReportsExportCenterView
-                products={products}
+                products={effectiveProducts}
                 analyticsMap={analyticsMap}
                 reportMeta={reportMeta}
                 onSelectProduct={(p) => setInspectProduct(p)}
@@ -2152,7 +2178,7 @@ export default function App() {
 
             {currentView === 'top_sales' && (
               <TopSalesSection
-                products={products}
+                products={effectiveProducts}
                 analyticsMap={analyticsMap}
                 onSelectProduct={(p) => setInspectProduct(p)}
                 onSelectView={handleNavigateView}
@@ -2163,7 +2189,7 @@ export default function App() {
 
             {currentView === 'floor_audit' && (
               <FloorAuditHub
-                products={products}
+                products={effectiveProducts}
                 selectedStoreId={selectedStoreId}
                 isDarkMode={isDarkMode}
                 onStartAudit={handleStartAuditSession}
@@ -2171,6 +2197,7 @@ export default function App() {
                 onOpenFlagged={() => handleNavigateView('flagged_followup')}
                 onNavigateToStockIQ={() => handleNavigateView('dashboard')}
                 onOpenNearExpiry={() => handleNavigateView('near_expiry')}
+                onNavigateView={handleNavigateView}
               />
             )}
 
@@ -2178,7 +2205,7 @@ export default function App() {
               <FloorAuditRunner
                 session={activeAuditData.session}
                 results={activeAuditData.results}
-                products={products}
+                products={effectiveProducts}
                 stockReportMeta={reportMeta}
                 isDarkMode={isDarkMode}
                 onOpenScanner={() => setIsScannerOpen(true)}
@@ -2205,7 +2232,7 @@ export default function App() {
 
             {currentView === 'near_expiry' && (
               <NearExpiryHub
-                products={products}
+                products={effectiveProducts}
                 onBack={() => handleNavigateView('floor_audit')}
                 isDarkMode={isDarkMode}
               />
@@ -2217,7 +2244,7 @@ export default function App() {
                 coreMaster={coreMaster}
                 nonCoreMaster={nonCoreMaster}
                 allMasters={allFocusMasters}
-                stockProducts={products}
+                stockProducts={effectiveProducts}
                 reportDays={reportMeta?.reportDays}
                 initialScope={focusScope}
                 onScopeChange={(scope) => setFocusScope(scope)}
@@ -2265,7 +2292,7 @@ export default function App() {
               <FocusIssuesView
                 master={coreMaster}
                 focusType="core"
-                stockProducts={products}
+                stockProducts={effectiveProducts}
                 reportDays={reportMeta?.reportDays}
                 initialFilter={focusIssueFilter}
                 onBackToHub={() => handleNavigateView('focus_home')}
@@ -2292,7 +2319,7 @@ export default function App() {
               <FocusIssuesView
                 master={nonCoreMaster}
                 focusType="non_core"
-                stockProducts={products}
+                stockProducts={effectiveProducts}
                 reportDays={reportMeta?.reportDays}
                 initialFilter={focusIssueFilter}
                 onBackToHub={() => handleNavigateView('focus_home')}
@@ -2319,7 +2346,7 @@ export default function App() {
               <FocusProductListView
                 master={coreMaster}
                 focusType="core"
-                stockProducts={products}
+                stockProducts={effectiveProducts}
                 reportDays={reportMeta?.reportDays}
                 initialFilter={focusListFilter}
                 onBackToHome={() => handleNavigateView('focus_home')}
@@ -2349,7 +2376,7 @@ export default function App() {
               <FocusProductListView
                 master={nonCoreMaster}
                 focusType="non_core"
-                stockProducts={products}
+                stockProducts={effectiveProducts}
                 reportDays={reportMeta?.reportDays}
                 initialFilter={focusListFilter}
                 onBackToHome={() => handleNavigateView('focus_home')}
@@ -2379,7 +2406,7 @@ export default function App() {
               <FocusOfferMismatchView
                 master={coreMaster}
                 focusType="core"
-                stockProducts={products}
+                stockProducts={effectiveProducts}
                 initialFilter={focusOfferFilter}
                 onBackToHub={() => handleNavigateView('focus_home')}
                 onOpenIssuesView={() => {
@@ -2405,7 +2432,7 @@ export default function App() {
               <FocusOfferMismatchView
                 master={nonCoreMaster}
                 focusType="non_core"
-                stockProducts={products}
+                stockProducts={effectiveProducts}
                 initialFilter={focusOfferFilter}
                 onBackToHub={() => handleNavigateView('focus_home')}
                 onOpenIssuesView={() => {
@@ -2466,7 +2493,7 @@ export default function App() {
               <FocusFlaggedIssuesView
                 coreMaster={coreMaster}
                 nonCoreMaster={nonCoreMaster}
-                stockProducts={products}
+                stockProducts={effectiveProducts}
                 storeId={selectedStoreId}
                 isDarkMode={isDarkMode}
                 onBack={() => handleNavigateView('focus_home')}
@@ -2481,7 +2508,7 @@ export default function App() {
               <FocusHistoryView
                 coreMaster={coreMaster}
                 nonCoreMaster={nonCoreMaster}
-                stockProducts={products}
+                stockProducts={effectiveProducts}
                 storeId={selectedStoreId}
                 isDarkMode={isDarkMode}
                 onBack={() => handleNavigateView('focus_home')}
@@ -2535,7 +2562,7 @@ export default function App() {
           }}
           soundEnabled={soundEnabled}
           onToggleSound={() => setSoundEnabled(!soundEnabled)}
-          products={products}
+          products={effectiveProducts}
         />
       )}
 
@@ -2560,7 +2587,7 @@ export default function App() {
         <AiScannerModal
           isOpen={isAiScannerOpen}
           onClose={() => setIsAiScannerOpen(false)}
-          stockProducts={products}
+          stockProducts={effectiveProducts}
           onSelectProduct={(p) => {
             setSelectedProduct(p);
             setInspectProduct(p);
@@ -2586,7 +2613,7 @@ export default function App() {
       {isTableOpen && (
         <ProductTableModal
           isOpen={isTableOpen}
-          products={products}
+          products={effectiveProducts}
           onClose={() => setIsTableOpen(false)}
           onSelectProduct={(p) => {
             setSelectedProduct(p);
@@ -2606,7 +2633,7 @@ export default function App() {
           onClose={() => setIsAdminSettingsOpen(false)}
           reportMeta={reportMeta}
           productCount={products.length}
-          products={products}
+          products={effectiveProducts}
           onClearStoreStock={handleClearStoreStock}
           storesList={storesList}
           onOpenUploadForStore={(storeId, storeName) => {
@@ -2661,12 +2688,14 @@ export default function App() {
       {/* 9. Detailed Product Inspector Modal */}
       {inspectProduct && (
         <ProductDetailModal
+          ref={productDetailModalRef}
           key={inspectProduct.id}
           product={inspectProduct}
           analytics={analyticsMap.get(inspectProduct.id)}
           onClose={() => {
             setInspectProduct(null);
             setMatchingProducts([]);
+            setIsInspectDirty(false);
           }}
           onOpenLabelModal={(p) => setLabelProduct(p)}
           isDarkMode={isDarkMode}
@@ -2676,7 +2705,73 @@ export default function App() {
             setSelectedProduct(p);
             setActiveBarcode(p.barcode);
           }}
+          stockVariations={stockVariations}
+          onUpdateStockVariations={setStockVariations}
+          allProducts={effectiveProducts}
+          onDirtyChange={(dirty) => setIsInspectDirty(dirty)}
         />
+      )}
+
+      {/* Unsaved Scan Protection Modal */}
+      {unsavedScanModalOpen && pendingScannedProduct && (
+        <div className="fixed inset-0 z-[130] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Unsaved Physical Count</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">You scanned another product while editing an unsaved count. Choose an action before opening the scanned product:</p>
+              </div>
+            </div>
+            <div className="space-y-2 pt-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  const success = await productDetailModalRef.current?.submitAndSave();
+                  if (success) {
+                    const target = pendingScannedProduct;
+                    setUnsavedScanModalOpen(false);
+                    setPendingScannedProduct(null);
+                    setIsInspectDirty(false);
+                    setInspectProduct(target);
+                    setActiveBarcode(target.barcode);
+                    setMatchingProducts([target]);
+                  }
+                }}
+                className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+              >
+                Save & Open Scanned Product
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const target = pendingScannedProduct;
+                  setUnsavedScanModalOpen(false);
+                  setPendingScannedProduct(null);
+                  setIsInspectDirty(false);
+                  setInspectProduct(target);
+                  setActiveBarcode(target.barcode);
+                  setMatchingProducts([target]);
+                }}
+                className="w-full py-2.5 px-4 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+              >
+                Discard & Open Scanned Product
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setUnsavedScanModalOpen(false);
+                  setPendingScannedProduct(null);
+                }}
+                className="w-full py-2.5 px-4 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+              >
+                Continue Editing
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 10. Focus IQ Excel Upload Modal */}
@@ -2757,6 +2852,10 @@ export default function App() {
         onClear={() => setSessionScans([])}
         isDarkMode={isDarkMode}
       />
+
+      {/* Shared Purchase Contact Bottom Sheet / Modal */}
+      <PurchaseContactModal />
     </div>
+    </PurchaseContactProvider>
   );
 }

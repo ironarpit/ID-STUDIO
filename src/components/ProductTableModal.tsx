@@ -18,6 +18,8 @@ import { getUniqueMainCodes, matchesMainCodeFilter, isExcludedMainCode } from '.
 import { formatStandardStockProductsText, copyToClipboard } from '../utils/copyUtils';
 import { MultiSelectDropdown } from './MultiSelectDropdown';
 import { useModalTransition } from '../utils/useModalTransition';
+import { computeLinkedClassificationOptions } from '../utils/linkedFilters';
+import { ActiveFilterChips } from './ActiveFilterChips';
 
 interface ProductTableModalProps {
   isOpen: boolean;
@@ -93,50 +95,38 @@ export const ProductTableModal: React.FC<ProductTableModalProps> = ({
     setCurrentPage(1);
   }, [searchTerm, selectedMainCodes, selectedCategories, filterLowStock, sortBy, sortOrder, pageSize]);
 
-  // Derive unique MainCodes with counts
-  const mainCodesWithOptions = useMemo(() => {
-    const uniqueCodes = getUniqueMainCodes(products);
-    return uniqueCodes.map(code => {
-      const count = products.filter(p => matchesMainCodeFilter(p.mainCode, code)).length;
-      return { value: code, label: code, count };
-    });
-  }, [products]);
-
-  // Derive categories efficiently (filtered by selectedMainCodes if active)
-  const categoriesWithOptions = useMemo(() => {
-    const map = new Map<string, number>();
-    for (let i = 0; i < products.length; i++) {
-      const p = products[i];
-      if (selectedMainCodes.length > 0 && !matchesMainCodeFilter(p.mainCode, selectedMainCodes)) {
-        continue;
+  // Standardized filter logic
+  const {
+    filteredItems: processedProducts,
+    mainCodeOptions,
+    categoryOptions,
+  } = useMemo(() => {
+    return computeLinkedClassificationOptions<Product>(
+      products,
+      {
+        getMainCode: (p) => p.mainCode,
+        getCategory: (p) => p.category || 'General',
+      },
+      {
+        mainCodes: selectedMainCodes,
+        categories: selectedCategories,
       }
-      const cat = p.category || 'General';
-      map.set(cat, (map.get(cat) || 0) + 1);
-    }
-    return Array.from(map.entries())
-      .map(([cat, count]) => ({ value: cat, label: cat, count }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [products, selectedMainCodes]);
+    );
+  }, [products, selectedMainCodes, selectedCategories]);
 
-  // Purge selected categories if no longer available under selected MainCodes
+  // Reset page when search/filter changes
   useEffect(() => {
-    if (selectedCategories.length > 0 && categoriesWithOptions.length > 0) {
-      const validSet = new Set(categoriesWithOptions.map((c) => c.value.toLowerCase()));
-      const valid = selectedCategories.filter((c) => validSet.has(c.toLowerCase()));
-      if (valid.length !== selectedCategories.length) {
-        setSelectedCategories(valid);
-      }
-    }
-  }, [categoriesWithOptions, selectedCategories]);
+    setCurrentPage(1);
+  }, [searchTerm, selectedMainCodes, selectedCategories, filterLowStock, sortBy, sortOrder, pageSize]);
+
+
 
   // Filter products efficiently
-  const filteredProducts = useMemo(() => {
+  const searchedProducts = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     const cleanTerm = cleanBarcode(term).toLowerCase();
-
-    return products.filter(p => {
+    return processedProducts.filter(p => {
       if (isExcludedMainCode(p.mainCode)) return false;
-
       const matchesSearch =
         !term ||
         p.name.toLowerCase().includes(term) ||
@@ -144,7 +134,6 @@ export const ProductTableModal: React.FC<ProductTableModalProps> = ({
         (cleanTerm && cleanBarcode(p.barcode).toLowerCase().includes(cleanTerm)) ||
         (p.category && p.category.toLowerCase().includes(term)) ||
         (p.mainCode && p.mainCode.toLowerCase().includes(term));
-
       const matchesMainCode = matchesMainCodeFilter(p.mainCode, selectedMainCodes);
       const matchesCategory =
         selectedCategories.length === 0 ||
@@ -153,11 +142,11 @@ export const ProductTableModal: React.FC<ProductTableModalProps> = ({
 
       return matchesSearch && matchesMainCode && matchesCategory && matchesLowStock;
     });
-  }, [products, searchTerm, selectedMainCodes, selectedCategories, filterLowStock]);
+  }, [processedProducts, searchTerm, selectedMainCodes, selectedCategories, filterLowStock]);
 
   // Sort products
   const sortedProducts = useMemo(() => {
-    return [...filteredProducts].sort((a, b) => {
+    return [...searchedProducts].sort((a, b) => {
       let valA = a[sortBy] ?? 0;
       let valB = b[sortBy] ?? 0;
 
@@ -168,7 +157,7 @@ export const ProductTableModal: React.FC<ProductTableModalProps> = ({
       if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
       return 0;
     });
-  }, [filteredProducts, sortBy, sortOrder]);
+  }, [searchedProducts, sortBy, sortOrder]);
 
   // Calculate paginated slice
   const totalPages = Math.ceil(sortedProducts.length / pageSize) || 1;
@@ -217,7 +206,7 @@ export const ProductTableModal: React.FC<ProductTableModalProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                Browsing {filteredProducts.length.toLocaleString('en-IN')} matching items
+                Browsing {searchedProducts.length.toLocaleString('en-IN')} matching items
               </p>
             </div>
           </div>
@@ -226,7 +215,7 @@ export const ProductTableModal: React.FC<ProductTableModalProps> = ({
             <button
               type="button"
               onClick={handleCopyFiltered}
-              disabled={filteredProducts.length === 0}
+              disabled={searchedProducts.length === 0}
               className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-xs px-3 py-1.5 rounded-xl shadow-xs transition-all cursor-pointer active:scale-95 shrink-0"
               title={`Copy ${sortedProducts.length} filtered items`}
             >
@@ -234,18 +223,18 @@ export const ProductTableModal: React.FC<ProductTableModalProps> = ({
               <span>{copyFeedback || `COPY FILTERED PRODUCTS (${sortedProducts.length})`}</span>
             </button>
 
-            {onStartFloorAudit && filteredProducts.length > 0 && (
+            {onStartFloorAudit && searchedProducts.length > 0 && (
               <button
                 type="button"
                 onClick={() => {
-                  onStartFloorAudit('Catalog Filtered Floor Audit', 'general', filteredProducts);
+                  onStartFloorAudit('Catalog Filtered Floor Audit', 'general', searchedProducts);
                   handleClose();
                 }}
                 className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-1.5 rounded-xl shadow-xs transition-all cursor-pointer active:scale-95 shrink-0"
-                title={`Start Floor Audit for these ${filteredProducts.length} items`}
+                title={`Start Floor Audit for these ${searchedProducts.length} items`}
               >
                 <ClipboardCheck className="w-4 h-4 text-emerald-100" />
-                <span>Start Floor Audit ({filteredProducts.length})</span>
+                <span>Start Floor Audit ({searchedProducts.length})</span>
               </button>
             )}
 
@@ -378,7 +367,7 @@ export const ProductTableModal: React.FC<ProductTableModalProps> = ({
             {/* Multi-Select MainCode Filter (Separated FOOD, GROCERY, etc.) */}
             <MultiSelectDropdown
               label="MainCode"
-              options={mainCodesWithOptions}
+              options={mainCodeOptions}
               selectedValues={selectedMainCodes}
               onChange={(vals) => setSelectedMainCodes(vals)}
               placeholder="All Codes"
@@ -391,7 +380,7 @@ export const ProductTableModal: React.FC<ProductTableModalProps> = ({
             {/* Multi-Select Category Filter */}
             <MultiSelectDropdown
               label="Category"
-              options={categoriesWithOptions}
+              options={categoryOptions}
               selectedValues={selectedCategories}
               onChange={(vals) => setSelectedCategories(vals)}
               placeholder="All Categories"
@@ -465,7 +454,11 @@ export const ProductTableModal: React.FC<ProductTableModalProps> = ({
                     <tr 
                       key={p.id} 
                       className={`transition-colors cursor-pointer ${
-                        isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-indigo-50/40'
+                        p.stockVariation
+                          ? 'bg-amber-50/50 dark:bg-amber-950/20 hover:bg-amber-50/90 dark:hover:bg-amber-950/40'
+                          : isDarkMode
+                          ? 'hover:bg-slate-800/60'
+                          : 'hover:bg-indigo-50/40'
                       }`}
                       onClick={() => onSelectProduct(p)}
                     >
@@ -476,6 +469,11 @@ export const ProductTableModal: React.FC<ProductTableModalProps> = ({
                             {p.unit && (
                               <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/80 border border-emerald-200 dark:border-emerald-800 px-1.5 py-0.2 rounded-sm shrink-0">
                                 {p.unit}
+                              </span>
+                            )}
+                            {p.stockVariation && (
+                              <span className="text-[9px] font-black uppercase px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+                                Var
                               </span>
                             )}
                           </div>
@@ -497,14 +495,21 @@ export const ProductTableModal: React.FC<ProductTableModalProps> = ({
                       </td>
 
                       <td className="py-2 px-2 sm:py-2.5 sm:px-3 text-center hidden sm:table-cell">
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-black border ${
-                          isOut
+                        <span className={`inline-flex flex-col items-center gap-0.5 px-2 py-0.5 rounded-xl text-[11px] font-black border ${
+                          p.stockVariation
+                            ? 'bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 border-amber-300 dark:border-amber-700'
+                            : isOut
                             ? 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/80 dark:text-rose-300 dark:border-rose-800'
                             : isLow
                             ? 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-800'
                             : 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/80 dark:text-emerald-300 dark:border-emerald-800'
                         }`}>
-                          {stock.toLocaleString('en-IN')} units
+                          <span>{stock.toLocaleString('en-IN')} units</span>
+                          {p.stockVariation && p.systemStock !== undefined && (
+                            <span className="text-[9px] font-bold text-amber-700 dark:text-amber-300">
+                              Sys: {p.systemStock} (Var: {p.stockVariation.adjustment > 0 ? `+${p.stockVariation.adjustment}` : p.stockVariation.adjustment})
+                            </span>
+                          )}
                         </span>
                       </td>
 

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Eye, X, Package, ArrowUpRight } from 'lucide-react';
 import { Product } from '../types';
+import { PurchaseContactButton } from './PurchaseContactSheet';
 
 interface LastSearchedProductCardProps {
   product: Product;
@@ -89,7 +90,8 @@ export const LastSearchedProductCard: React.FC<LastSearchedProductCardProps> = (
         </div>
 
         {/* Right Side: Action Button & Close */}
-        <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end" onClick={(e) => e.stopPropagation()}>
+          <PurchaseContactButton product={product} variant="compact" />
           <button
             type="button"
             id="btn-view-details"

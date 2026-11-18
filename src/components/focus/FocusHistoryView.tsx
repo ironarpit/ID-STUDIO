@@ -183,16 +183,16 @@ export const FocusHistoryView: React.FC<FocusHistoryViewProps> = ({
             'Expected SP': parsed.expectedRetail !== null && !isNaN(parsed.expectedRetail) ? `₹${parsed.expectedRetail}` : '—',
             'Current Retail SP': stockProd?.retailPrice !== undefined ? `₹${stockProd.retailPrice}` : '—',
             'Live Stock': stockProd?.stock ?? '—',
-            'Scan Verification': res?.scanVerified ? `VERIFIED (${res.verifiedBarcode})` : res?.scanError ? `WRONG PRODUCT (${res.scannedBarcode})` : 'NOT SCANNED',
-            'Check Status': res?.status || 'PENDING',
-            'On Floor': res?.onFloor || 'YES',
-            'Display / Facing': res?.displayFacing || 'GOOD',
-            'Focus Board': res?.focusBoard || 'CORRECT',
-            'Issue Reason / Preset': res?.issuePreset || '—',
-            'Original Remark': res?.remark || '—',
-            'Resolution Status': res?.isResolved ? 'RESOLVED' : res?.status === 'FLAGGED' ? 'OPEN' : '—',
-            'Resolution Remark': res?.resolutionRemark || '—',
-            'Checked At': res?.checkedAt ? new Date(res.checkedAt).toLocaleString() : '—'
+            'Scan Verification': res?.scanVerified ? `VERIFIED (${res.verifiedBarcode})` : res?.scanError ? `WRONG PRODUCT (${res.scannedBarcode})` : (res?.status ? 'NOT SCANNED' : ''),
+            'Check Status': res?.status || '',
+            'On Floor': res?.onFloor || '',
+            'Display / Facing': res?.displayFacing || '',
+            'Focus Board': res?.focusBoard || '',
+            'Issue Reason / Preset': res?.issuePreset || '',
+            'Original Remark': res?.remark || '',
+            'Resolution Status': res?.isResolved ? 'RESOLVED' : res?.status === 'FLAGGED' ? 'OPEN' : '',
+            'Resolution Remark': res?.resolutionRemark || '',
+            'Checked At': res?.checkedAt ? new Date(res.checkedAt).toLocaleString() : ''
           };
         });
 

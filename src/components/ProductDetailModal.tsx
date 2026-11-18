@@ -15,14 +15,21 @@ import {
   Layers,
   Tag,
   Image as ImageIcon,
-  ExternalLink
+  ExternalLink,
+  AlertTriangle,
+  Edit3
 } from 'lucide-react';
-import { Product, ComputedProductAnalytics } from '../types';
-import { loadStockVariations, getStockVariation, upsertStockVariation, deleteStockVariation, getSystemStock, StockVariation } from '../utils/stockVariations';
+import { Product, ComputedProductAnalytics, StockVariation } from '../types';
+import { loadStockVariations, getStockVariation, upsertStockVariation, deleteStockVariation, getSystemStock } from '../utils/stockVariations';
 import { getProductBrand } from '../utils/analytics';
 import { useModalTransition } from '../utils/useModalTransition';
 import { cleanDateOnly } from '../utils/fileParser';
 import { MatchingProductsList } from './MatchingProductsList';
+import { PurchaseContactButton } from './PurchaseContactSheet';
+
+export interface ProductDetailModalHandle {
+  submitAndSave: () => Promise<boolean>;
+}
 
 interface ProductDetailModalProps {
   product: Product | null;
@@ -33,9 +40,13 @@ interface ProductDetailModalProps {
   matchingProducts?: Product[];
   onSelectProduct?: (product: Product) => void;
   zIndexClassName?: string;
+  stockVariations?: Record<string, StockVariation>;
+  onUpdateStockVariations?: (variations: Record<string, StockVariation>) => void;
+  allProducts?: Product[];
+  onDirtyChange?: (isDirty: boolean) => void;
 }
 
-export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
+export const ProductDetailModal = React.forwardRef<ProductDetailModalHandle, ProductDetailModalProps>(({
   product,
   analytics,
   onClose,
@@ -43,8 +54,12 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   isDarkMode = false,
   matchingProducts,
   onSelectProduct,
-  zIndexClassName = 'z-[100]'
-}) => {
+  zIndexClassName = 'z-[100]',
+  stockVariations,
+  onUpdateStockVariations,
+  allProducts,
+  onDirtyChange
+}, ref) => {
   const barcodeSvgRef = useRef<SVGSVGElement>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [showExtraColumns, setShowExtraColumns] = useState(false);
@@ -192,21 +207,262 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   const mrp = product.mrp || product.retailPrice || 0;
   const retailPrice = product.retailPrice || product.mrp || 0;
   const systemStock = getSystemStock(product);
-  const [variationsMap, setVariationsMap] = React.useState<Record<string, StockVariation>>(loadStockVariations);
-  const currentVariation = React.useMemo(() => getStockVariation(product, variationsMap), [product, variationsMap]);
-  const stock = currentVariation ? systemStock + currentVariation.adjustment : systemStock;
+  const [variationsMap, setVariationsMap] = React.useState<Record<string, StockVariation>>(
+    () => stockVariations || loadStockVariations()
+  );
 
-  const [physicalInput, setPhysicalInput] = React.useState<string>(currentVariation ? String(currentVariation.physicalStock) : '');
+  // Sync variations if prop changes or on external event
+  React.useEffect(() => {
+    if (stockVariations) {
+      setVariationsMap(stockVariations);
+    }
+  }, [stockVariations]);
+
+  React.useEffect(() => {
+    const handleVarChange = () => {
+      setVariationsMap(loadStockVariations());
+    };
+    window.addEventListener('bsm_stock_variations_changed', handleVarChange);
+    return () => window.removeEventListener('bsm_stock_variations_changed', handleVarChange);
+  }, []);
+
+  const currentVariation = React.useMemo(
+    () => getStockVariation(product, variationsMap, allProducts),
+    [product, variationsMap, allProducts]
+  );
+
+  // Working stock calculation:
+  // If variation exists: Latest Original System Stock + Saved Adjustment (equals physical count if system stock is valid)
+  // Else: Latest Original System Stock
+  const stock = currentVariation && systemStock !== null
+    ? systemStock + currentVariation.adjustment
+    : systemStock !== null
+    ? systemStock
+    : 0;
+
+  const [isEditingStock, setIsEditingStock] = React.useState(false);
+  const [physicalInput, setPhysicalInput] = React.useState<string>(
+    currentVariation ? String(currentVariation.physicalStock) : ''
+  );
   const [remarkInput, setRemarkInput] = React.useState<string>(currentVariation?.remark || '');
+  const [isDirty, setIsDirty] = React.useState(false);
+  const [variationError, setVariationError] = React.useState<string | null>(null);
   const [variationMsg, setVariationMsg] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    const vars = loadStockVariations();
-    setVariationsMap(vars);
-    const v = getStockVariation(product, vars);
+    const v = getStockVariation(product, variationsMap, allProducts);
     setPhysicalInput(v ? String(v.physicalStock) : '');
     setRemarkInput(v?.remark || '');
-  }, [product]);
+    setIsDirty(false);
+    setIsEditingStock(false);
+    setVariationError(null);
+  }, [product, variationsMap, allProducts]);
+
+  React.useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+
+  React.useImperativeHandle(ref, () => ({
+    submitAndSave: async (): Promise<boolean> => {
+      if (physicalInput.trim() === '') {
+        setVariationError('Physical count cannot be blank. Enter a valid non-negative number.');
+        return false;
+      }
+      const count = parseFloat(physicalInput);
+      if (isNaN(count) || !isFinite(count) || count < 0) {
+        setVariationError('Please enter a valid non-negative physical count.');
+        return false;
+      }
+      if (systemStock === null) {
+        setVariationError('Original system stock quantity is unavailable.');
+        return false;
+      }
+
+      const res = await upsertStockVariation(
+        product,
+        count,
+        remarkInput,
+        product.storeId || 'PATAN',
+        allProducts
+      );
+
+      if (res.success) {
+        const updated = loadStockVariations();
+        setVariationsMap(updated);
+        onUpdateStockVariations?.(updated);
+        setIsEditingStock(false);
+        setIsDirty(false);
+        setVariationError(null);
+        return true;
+      } else {
+        setVariationError(res.error || 'Failed to save physical stock adjustment.');
+        return false;
+      }
+    }
+  }));
+
+  // Live preview calculation for physical stock editing
+  const parsedPhysicalInput = parseFloat(physicalInput);
+  const isPhysicalValid =
+    !isNaN(parsedPhysicalInput) &&
+    isFinite(parsedPhysicalInput) &&
+    parsedPhysicalInput >= 0 &&
+    physicalInput.trim() !== '';
+
+  const previewCalc = React.useMemo(() => {
+    if (!isPhysicalValid || systemStock === null) return null;
+    const adj = parsedPhysicalInput - systemStock;
+    return {
+      adjustment: adj,
+      adjustedStock: systemStock + adj
+    };
+  }, [isPhysicalValid, parsedPhysicalInput, systemStock]);
+
+  const [pendingSwitchProduct, setPendingSwitchProduct] = React.useState<Product | null>(null);
+
+  const handleSavePhysicalStock = async () => {
+    if (physicalInput.trim() === '') {
+      setVariationError('Physical count cannot be blank. Enter a valid non-negative number (0 and decimals allowed).');
+      return;
+    }
+    const count = parseFloat(physicalInput);
+    if (isNaN(count) || !isFinite(count)) {
+      setVariationError('Physical count must be a valid finite number.');
+      return;
+    }
+    if (count < 0) {
+      setVariationError('Physical count cannot be negative.');
+      return;
+    }
+    if (systemStock === null) {
+      setVariationError('Original system stock quantity is unavailable for this product.');
+      return;
+    }
+
+    const res = await upsertStockVariation(
+      product,
+      count,
+      remarkInput,
+      product.storeId || 'PATAN',
+      allProducts
+    );
+
+    if (res.success) {
+      const updated = loadStockVariations();
+      setVariationsMap(updated);
+      onUpdateStockVariations?.(updated);
+      setIsEditingStock(false);
+      setIsDirty(false);
+      setVariationError(null);
+      setVariationMsg(
+        res.variation
+          ? 'Physical stock adjustment saved successfully.'
+          : 'Physical count matches original system stock. Adjustment cleared.'
+      );
+      setTimeout(() => setVariationMsg(null), 3000);
+    } else {
+      setVariationError(res.error || 'Failed to save physical stock adjustment.');
+    }
+  };
+
+  const handleRemoveAdjustment = async () => {
+    const res = await deleteStockVariation(product);
+    if (res.success) {
+      const updated = loadStockVariations();
+      setVariationsMap(updated);
+      onUpdateStockVariations?.(updated);
+      setIsEditingStock(false);
+      setIsDirty(false);
+      setPhysicalInput('');
+      setRemarkInput('');
+      setVariationError(null);
+      setVariationMsg('Stock adjustment removed. System stock restored.');
+      setTimeout(() => setVariationMsg(null), 3000);
+    } else {
+      setVariationError(res.error || 'Failed to remove adjustment.');
+    }
+  };
+
+  const handleCancelEditStock = () => {
+    if (isDirty) {
+      if (!window.confirm('Discard unsaved physical stock count?')) {
+        return;
+      }
+    }
+    setIsEditingStock(false);
+    setIsDirty(false);
+    setVariationError(null);
+    setPhysicalInput(currentVariation ? String(currentVariation.physicalStock) : '');
+    setRemarkInput(currentVariation?.remark || '');
+  };
+
+  const handleSafeClose = () => {
+    if (isDirty) {
+      if (!window.confirm('You have unsaved changes to physical stock count. Are you sure you want to discard them?')) {
+        return;
+      }
+    }
+    handleClose();
+  };
+
+  const handleAttemptSwitchProduct = (targetProduct: Product) => {
+    if (isDirty) {
+      setPendingSwitchProduct(targetProduct);
+    } else {
+      setIsDirty(false);
+      setIsEditingStock(false);
+      onSelectProduct?.(targetProduct);
+    }
+  };
+
+  const handleUnsaveSaveAndSwitch = async () => {
+    if (!pendingSwitchProduct) return;
+    if (physicalInput.trim() === '') {
+      setVariationError('Physical count cannot be blank. Enter a valid non-negative number.');
+      return;
+    }
+    const count = parseFloat(physicalInput);
+    if (isNaN(count) || !isFinite(count) || count < 0) {
+      setVariationError('Please enter a valid non-negative physical count.');
+      return;
+    }
+    if (systemStock === null) {
+      setVariationError('Original system stock quantity is unavailable.');
+      return;
+    }
+
+    const res = await upsertStockVariation(
+      product,
+      count,
+      remarkInput,
+      product.storeId || 'PATAN',
+      allProducts
+    );
+
+    if (res.success) {
+      const updated = loadStockVariations();
+      setVariationsMap(updated);
+      onUpdateStockVariations?.(updated);
+      setIsEditingStock(false);
+      setIsDirty(false);
+      setVariationError(null);
+      const target = pendingSwitchProduct;
+      setPendingSwitchProduct(null);
+      onSelectProduct?.(target);
+    } else {
+      setVariationError(res.error || 'Failed to save physical stock adjustment.');
+    }
+  };
+
+  const handleUnsaveDiscardAndSwitch = () => {
+    if (!pendingSwitchProduct) return;
+    const target = pendingSwitchProduct;
+    setPendingSwitchProduct(null);
+    setIsDirty(false);
+    setIsEditingStock(false);
+    onSelectProduct?.(target);
+  };
+
   const salesCount = product.salesCount || 0;
 
   const discountPct = mrp > retailPrice && mrp > 0 ? Math.round(((mrp - retailPrice) / mrp) * 100) : 0;
@@ -255,10 +511,17 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
     const formattedSold = salesCount.toLocaleString('en-IN');
     const formattedCover = daysCover !== null ? daysCover.toFixed(1) : (stock <= 0 ? '0.0' : '—');
 
+    const adjVal = currentVariation ? currentVariation.adjustment : 0;
+    const adjStr = adjVal < 0 ? `−${Math.abs(adjVal)}` : adjVal > 0 ? `+${adjVal}` : `0`;
+
+    const closingLine = currentVariation && systemStock !== null && currentVariation.status !== 'needs_review'
+      ? `Closing: ${stock} | System: ${systemStock} | Variation: ${adjStr}`
+      : `Closing: ${formattedStock} Units`;
+
     const summary = `${product.name} (${bansalCodeVal})
 
 MRP: ₹${formattedMrp} | Retail: ₹${formattedRetail}
-Closing: ${formattedStock} Units | Sold: ${formattedSold} | Cover: ${formattedCover} Days`;
+${closingLine} | Sold: ${formattedSold} | Cover: ${formattedCover} Days`;
 
     handleCopyText(summary, 'full_details');
   };
@@ -320,7 +583,7 @@ Closing: ${formattedStock} Units | Sold: ${formattedSold} | Cover: ${formattedCo
         boxSizing: 'border-box',
       }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) handleClose();
+        if (e.target === e.currentTarget) handleSafeClose();
       }}
     >
       <div
@@ -334,7 +597,7 @@ Closing: ${formattedStock} Units | Sold: ${formattedSold} | Cover: ${formattedCo
           <div className="flex items-start justify-between gap-2.5">
             <button
               type="button"
-              onClick={handleClose}
+              onClick={handleSafeClose}
               className="flex items-center justify-center gap-1.5 min-h-[44px] min-w-[44px] px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 dark:active:bg-slate-600 text-slate-700 dark:text-slate-200 font-bold text-xs sm:text-sm transition-all cursor-pointer shrink-0"
               title="Return"
               aria-label="Return"
@@ -377,9 +640,22 @@ Closing: ${formattedStock} Units | Sold: ${formattedSold} | Cover: ${formattedCo
                     ABC: {analytics.abcCategory}
                   </span>
                 )}
+
+                {currentVariation && (
+                  <span className="text-[10px] sm:text-[11px] font-black px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-950/90 dark:text-amber-200 dark:border-amber-700 uppercase tracking-wider flex items-center gap-1 shadow-2xs">
+                    <Layers className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                    <span>Stock Variation</span>
+                  </span>
+                )}
+
+                {currentVariation?.recountNeeded && (
+                  <span className="text-[10px] sm:text-[11px] font-black px-2 py-0.5 rounded-md bg-rose-100 text-rose-900 border border-rose-300 dark:bg-rose-950/90 dark:text-rose-200 dark:border-rose-700 uppercase tracking-wider flex items-center gap-1 shadow-2xs">
+                    <span>⚠️ Recount needed</span>
+                  </span>
+                )}
               </div>
 
-              {/* Product Name (Full product name visible, high contrast, wrapping cleanly) */}
+              {/* Product Name */}
               <h2 className="text-base sm:text-lg md:text-xl font-extrabold text-slate-900 dark:text-white leading-snug break-words">
                 {product.name}
                 {product.unit && (
@@ -393,7 +669,7 @@ Closing: ${formattedStock} Units | Sold: ${formattedSold} | Cover: ${formattedCo
             {/* Permanently visible 44×44px Close Button */}
             <button
               type="button"
-              onClick={handleClose}
+              onClick={handleSafeClose}
               className="w-11 h-11 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 dark:active:bg-slate-600 text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white cursor-pointer shrink-0 transition-colors"
               title="Close Inspector"
               aria-label="Close Inspector"
@@ -528,19 +804,46 @@ Closing: ${formattedStock} Units | Sold: ${formattedSold} | Cover: ${formattedCo
               </div>
 
               <div className="grid grid-cols-2 gap-2 text-left">
-                {/* Closing Stock (Strongest Value) */}
-                <div className="p-2 rounded-lg bg-indigo-50 dark:bg-indigo-950/70 border border-indigo-200 dark:border-indigo-800 shadow-2xs">
-                  <span className="text-[11px] font-black uppercase tracking-wider text-indigo-700 dark:text-indigo-300 block">
-                    Closing Stock
-                  </span>
+                {/* Closing Stock / Adjusted Stock */}
+                <div
+                  className={`p-2 rounded-lg border shadow-2xs ${
+                    currentVariation
+                      ? 'bg-amber-50/90 dark:bg-amber-950/70 border-amber-300 dark:border-amber-700'
+                      : 'bg-indigo-50 dark:bg-indigo-950/70 border-indigo-200 dark:border-indigo-800'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span
+                      className={`text-[11px] font-black uppercase tracking-wider block ${
+                        currentVariation ? 'text-amber-800 dark:text-amber-300' : 'text-indigo-700 dark:text-indigo-300'
+                      }`}
+                    >
+                      {currentVariation ? 'Adjusted Stock' : 'Closing Stock'}
+                    </span>
+                    {currentVariation && (
+                      <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-amber-200 dark:bg-amber-900 text-amber-900 dark:text-amber-200">
+                        Adjusted
+                      </span>
+                    )}
+                  </div>
                   <span
                     className={`font-mono text-xl sm:text-2xl font-black block truncate ${
-                      stock <= 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'
+                      stock <= 0
+                        ? 'text-rose-600 dark:text-rose-400'
+                        : currentVariation
+                        ? 'text-amber-900 dark:text-amber-100'
+                        : 'text-slate-900 dark:text-white'
                     }`}
                   >
                     {stock.toLocaleString('en-IN')}
                     {product.unit ? <span className="text-xs font-bold ml-1 text-slate-500">{product.unit}</span> : ''}
                   </span>
+                  {currentVariation && systemStock !== null && currentVariation.status !== 'needs_review' && (
+                    <div className="text-[10px] font-bold text-amber-700 dark:text-amber-300 mt-1 space-y-0.5 border-t border-amber-200/60 dark:border-amber-800/60 pt-1">
+                      <div>System: {systemStock} | Var: {currentVariation.adjustment < 0 ? `−${Math.abs(currentVariation.adjustment)}` : currentVariation.adjustment > 0 ? `+${currentVariation.adjustment}` : currentVariation.adjustment}</div>
+                      <div>Physical: {currentVariation.physicalStock} {currentVariation.timestamp ? `(${new Date(currentVariation.timestamp).toLocaleDateString()})` : ''}</div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Total Sold */}
@@ -580,6 +883,271 @@ Closing: ${formattedStock} Units | Sold: ${formattedSold} | Cover: ${formattedCo
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* PHYSICAL STOCK ADJUSTMENT CARD */}
+          <div
+            className={`p-3.5 rounded-xl border transition-all ${
+              currentVariation
+                ? 'bg-amber-50/70 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800'
+                : 'bg-slate-50/80 dark:bg-slate-800/40 border-slate-200 dark:border-slate-800'
+            }`}
+          >
+            {/* Card Header with Visible Set/Edit Physical Stock Button */}
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200/80 dark:border-slate-800 gap-2">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <Layers
+                  className={`w-4 h-4 ${
+                    currentVariation ? 'text-amber-600 dark:text-amber-400' : 'text-indigo-600 dark:text-indigo-400'
+                  }`}
+                />
+                <span className="text-xs font-black uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                  Physical Stock Adjustment
+                </span>
+                {currentVariation && (
+                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 dark:bg-amber-900/80 dark:text-amber-200 border border-amber-300 dark:border-amber-700">
+                    Stock Variation Active
+                  </span>
+                )}
+              </div>
+
+              {!isEditingStock && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditingStock(true);
+                    setVariationError(null);
+                    setPhysicalInput(currentVariation ? String(currentVariation.physicalStock) : '');
+                    setRemarkInput(currentVariation?.remark || '');
+                    setIsDirty(false);
+                  }}
+                  className={`px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-all active:scale-95 shadow-2xs ${
+                    currentVariation
+                      ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                      : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                  }`}
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span>{currentVariation ? 'Edit Physical Stock' : 'Set / Edit Physical Stock'}</span>
+                </button>
+              )}
+            </div>
+
+            {/* Active Variation Summary Info */}
+            {currentVariation && !isEditingStock && (
+              <div className="pt-2.5 space-y-2">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                  <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-900">
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block">Adjusted Stock</span>
+                    <span className="font-mono text-base font-black text-amber-900 dark:text-amber-200 block">
+                      {stock}
+                    </span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block">System Stock</span>
+                    <span className="font-mono text-base font-bold text-slate-800 dark:text-slate-200 block">
+                      {systemStock !== null ? systemStock : '—'}
+                    </span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block">Variation</span>
+                    <span
+                      className={`font-mono text-base font-black block ${
+                        currentVariation.adjustment > 0
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-rose-600 dark:text-rose-400'
+                      }`}
+                    >
+                      {currentVariation.adjustment > 0 ? `+${currentVariation.adjustment}` : currentVariation.adjustment}
+                    </span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                    <span className="text-[10px] uppercase font-bold text-slate-500 block">Last Physical Count</span>
+                    <span className="font-mono text-xs font-bold text-slate-800 dark:text-slate-200 block truncate">
+                      {currentVariation.physicalStock} ·{' '}
+                      {new Date(currentVariation.timestamp).toLocaleDateString('en-GB')}
+                    </span>
+                  </div>
+                </div>
+
+                {currentVariation.remark && (
+                  <div className="text-xs text-slate-600 dark:text-slate-300 italic">
+                    Remark: {currentVariation.remark}
+                  </div>
+                )}
+
+                {currentVariation.recountNeeded && (
+                  <div className="p-2 rounded-lg bg-rose-50 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-800 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>Recount needed: adjusted stock is negative ({stock}).</span>
+                  </div>
+                )}
+
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-normal">
+                  Adjustment remains active across uploads. Recount or remove it when the retail system corrects its
+                  stock.
+                </p>
+
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditingStock(true);
+                      setVariationError(null);
+                      setPhysicalInput(String(currentVariation.physicalStock));
+                      setRemarkInput(currentVariation.remark || '');
+                      setIsDirty(false);
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-200 font-bold text-xs hover:bg-amber-50 dark:hover:bg-amber-950 cursor-pointer"
+                  >
+                    Recount / Edit Physical Stock
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRemoveAdjustment}
+                    className="px-3 py-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 font-bold text-xs hover:bg-rose-100 cursor-pointer"
+                  >
+                    Remove Adjustment
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Editing Form */}
+            {isEditingStock && (
+              <div className="pt-2.5 space-y-3">
+                <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-500 dark:text-slate-400">Original System Stock:</span>
+                    <span className="font-mono text-sm font-black text-slate-900 dark:text-white">
+                      {systemStock !== null ? systemStock : 'Unavailable'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Physical count includes floor + warehouse stock.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Total Physical Count (Floor + Warehouse) *
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={physicalInput}
+                    onChange={(e) => {
+                      setPhysicalInput(e.target.value);
+                      setIsDirty(true);
+                      setVariationError(null);
+                    }}
+                    placeholder="e.g. 10 or 10.5"
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-950 font-mono font-bold text-base text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    autoFocus
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Optional Remark
+                  </label>
+                  <input
+                    type="text"
+                    value={remarkInput}
+                    onChange={(e) => {
+                      setRemarkInput(e.target.value);
+                      setIsDirty(true);
+                    }}
+                    placeholder="e.g. Recounted floor 6 + warehouse 4"
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-950 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                {/* Live Preview Calculation */}
+                {previewCalc && (
+                  <div className="p-2.5 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-xs space-y-1">
+                    <div className="flex items-center justify-between font-bold">
+                      <span className="text-indigo-800 dark:text-indigo-300">Adjustment Preview:</span>
+                      <span
+                        className={`font-mono text-sm font-black ${
+                          previewCalc.adjustment > 0
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : previewCalc.adjustment < 0
+                            ? 'text-rose-600 dark:text-rose-400'
+                            : 'text-slate-600 dark:text-slate-400'
+                        }`}
+                      >
+                        {previewCalc.adjustment > 0 ? `+${previewCalc.adjustment}` : previewCalc.adjustment}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-slate-600 dark:text-slate-400">
+                      <span>Resulting Adjusted Stock:</span>
+                      <span className="font-mono font-bold text-slate-900 dark:text-white">
+                        {previewCalc.adjustedStock}
+                      </span>
+                    </div>
+                    {previewCalc.adjustment === 0 && (
+                      <p className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">
+                        Count matches original system stock. Saving will clear the variation.
+                      </p>
+                    )}
+                    {previewCalc.adjustedStock < 0 && (
+                      <p className="text-[11px] text-rose-600 dark:text-rose-400 font-bold">
+                        ⚠️ Resulting stock is negative. Recount needed will be flagged.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {variationError && (
+                  <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>{variationError}</span>
+                  </div>
+                )}
+
+                {/* Actions: Save / Cancel / Remove */}
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  <div>
+                    {currentVariation && (
+                      <button
+                        type="button"
+                        onClick={handleRemoveAdjustment}
+                        className="px-3 py-2 rounded-xl text-xs font-bold bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 cursor-pointer transition-all active:scale-95"
+                      >
+                        Remove Adjustment
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleCancelEditStock}
+                      className="px-3 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 cursor-pointer transition-all"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSavePhysicalStock}
+                      className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white shadow-xs cursor-pointer transition-all active:scale-95 flex items-center gap-1.5"
+                    >
+                      <Check className="w-4 h-4" />
+                      <span>Save Adjustment</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Feedback message */}
+            {variationMsg && (
+              <div className="mt-2 p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-xs font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
+                <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{variationMsg}</span>
+              </div>
+            )}
           </div>
 
           {/* SECTION 4: SUPPLIER AND LAST PURCHASE (Promoted Prominently) */}
@@ -637,8 +1205,9 @@ Closing: ${formattedStock} Units | Sold: ${formattedSold} | Cover: ${formattedCo
               </span>
             </div>
 
-            {/* Action Buttons Row (Search Images, Copy SKU, Print Sticker) */}
-            <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap shrink-0 w-full sm:w-auto justify-start sm:justify-end">
+            {/* Action Buttons Row (Purchase Contact, Search Images, Copy SKU, Print Sticker) */}
+            <div className="flex items-center gap-2 flex-wrap shrink-0 w-full sm:w-auto justify-start sm:justify-end">
+              <PurchaseContactButton product={product} variant="full" />
               {searchImagesUrl ? (
                 <a
                   href={searchImagesUrl}
@@ -759,7 +1328,7 @@ Closing: ${formattedStock} Units | Sold: ${formattedSold} | Cover: ${formattedCo
                 barcode={product.barcode}
                 products={matchingProducts}
                 selectedProductId={product.id}
-                onSelectProduct={onSelectProduct}
+                onSelectProduct={(p) => handleAttemptSwitchProduct(p)}
               />
             </div>
           )}
@@ -770,7 +1339,7 @@ Closing: ${formattedStock} Units | Sold: ${formattedSold} | Cover: ${formattedCo
           {/* Desktop Left: Back to list */}
           <button
             type="button"
-            onClick={handleClose}
+            onClick={handleSafeClose}
             className="hidden sm:flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs sm:text-sm transition-colors cursor-pointer active:scale-95 min-h-[44px]"
           >
             <ArrowLeft className="w-4 h-4" />
@@ -802,7 +1371,57 @@ Closing: ${formattedStock} Units | Sold: ${formattedSold} | Cover: ${formattedCo
           </button>
         </div>
       </div>
+
+      {/* Unsaved Physical Count Prompt Modal */}
+      {pendingSwitchProduct && (
+        <div className="fixed inset-0 z-[120] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Unsaved Physical Count</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">You have unsaved changes while editing physical stock. Choose an action before opening the new product:</p>
+              </div>
+            </div>
+            {variationError && (
+              <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded-xl text-xs text-red-600 dark:text-red-400 font-medium">
+                {variationError}
+              </div>
+            )}
+            <div className="space-y-2 pt-2">
+              <button
+                type="button"
+                onClick={handleUnsaveSaveAndSwitch}
+                className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+              >
+                Save & Open Scanned Product
+              </button>
+              <button
+                type="button"
+                onClick={handleUnsaveDiscardAndSwitch}
+                className="w-full py-2.5 px-4 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+              >
+                Discard & Open Scanned Product
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingSwitchProduct(null);
+                  setVariationError(null);
+                }}
+                className="w-full py-2.5 px-4 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+              >
+                Continue Editing
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
-};
+});
+
+ProductDetailModal.displayName = 'ProductDetailModal';
 

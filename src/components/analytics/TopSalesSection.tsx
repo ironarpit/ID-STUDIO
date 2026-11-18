@@ -31,7 +31,7 @@ export const TopSalesSection: React.FC<TopSalesSectionProps> = ({
 
   // Bidirectional linked options computation
   const linkedResult = useMemo(() => {
-    return computeLinkedClassificationOptions(
+    return computeLinkedClassificationOptions<Product>(
       products,
       {
         getMainCode: (p) => p.mainCode,

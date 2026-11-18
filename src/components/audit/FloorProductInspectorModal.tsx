@@ -28,6 +28,7 @@ import {
 } from '../../types';
 import { cleanDateOnly } from '../../utils/fileParser';
 import { formatSingleProductResultText, copyToClipboard } from '../../utils/copyUtils';
+import { PurchaseContactButton } from '../PurchaseContactSheet';
 
 interface FloorProductInspectorModalProps {
   result: AuditProductResult;
@@ -407,6 +408,29 @@ export const FloorProductInspectorModal = forwardRef<AuditCheckFormHandle, Floor
   useImperativeHandle(ref, () => ({
     submitValidated: async (advanceToNext: boolean) => {
       return await handleSaveAction(advanceToNext);
+    },
+    getDraftValues: () => {
+      const finalRemark = remarks || (reportIssueActive ? issueRemark : undefined);
+      const finalIssue = reportIssueActive 
+        ? (issueRemark.trim() || remarks || 'Action Required on floor')
+        : undefined;
+
+      const hasAnswers = isOnFloor !== undefined || boardStatus !== undefined;
+      const targetStatus = reportIssueActive ? 'flagged' : hasAnswers ? 'done' : result.status;
+
+      return {
+        isOnFloor,
+        visibilityLevel: isOnFloor === 'yes' ? visibilityLevel : undefined,
+        displayLocations: isOnFloor === 'yes' ? displayLocations : [],
+        boardStatus,
+        issueReason: finalIssue,
+        remarks: finalRemark,
+        remark: finalRemark,
+        checkedBy: activeChecker || result.checkedBy,
+        locationStatus: isOnFloor === 'yes' ? 'on_floor' : isOnFloor === 'no' ? 'not_found' : undefined,
+        displayPosition: visibilityLevel === 'eye_level' ? 'eye_level' : visibilityLevel === 'above_eye' ? 'above_eye' : visibilityLevel === 'below_eye' ? 'below_eye' : isOnFloor === 'no' ? 'not_displayed' : undefined,
+        status: targetStatus,
+      };
     }
   }));
 
@@ -588,11 +612,33 @@ export const FloorProductInspectorModal = forwardRef<AuditCheckFormHandle, Floor
                 <span className="font-bold text-slate-700 dark:text-slate-300 font-sans block truncate">{product?.category || result.category || 'General'}</span>
               </div>
 
-              <div className="p-2 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs">
-                <span className="text-[9px] text-slate-400 font-sans uppercase font-bold block">Closing Stock</span>
-                <span className="font-bold text-sm text-indigo-600 dark:text-indigo-400 block truncate">
+              <div className={`p-2 rounded-xl border shadow-2xs ${
+                product?.stockVariation
+                  ? 'bg-amber-50 dark:bg-amber-950/70 border-amber-300 dark:border-amber-700'
+                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <span className={`text-[9px] font-sans uppercase font-bold block ${
+                    product?.stockVariation ? 'text-amber-800 dark:text-amber-300' : 'text-slate-400'
+                  }`}>
+                    {product?.stockVariation ? 'Adjusted Stock' : 'Closing Stock'}
+                  </span>
+                  {product?.stockVariation && (
+                    <span className="text-[8px] font-black uppercase px-1 py-0.2 rounded bg-amber-200 dark:bg-amber-900 text-amber-900 dark:text-amber-200">
+                      Var
+                    </span>
+                  )}
+                </div>
+                <span className={`font-bold text-sm block truncate ${
+                  product?.stockVariation ? 'text-amber-900 dark:text-amber-100' : 'text-indigo-600 dark:text-indigo-400'
+                }`}>
                   {product?.stock !== undefined && product?.stock !== null ? product.stock : result.stock !== undefined && result.stock !== null ? result.stock : 'Not Available'}
                 </span>
+                {product?.stockVariation && product?.systemStock !== undefined && (
+                  <span className="text-[9px] font-bold text-amber-700 dark:text-amber-300 block truncate">
+                    Sys: {product.systemStock} | Var: {product.stockVariation.adjustment > 0 ? `+${product.stockVariation.adjustment}` : product.stockVariation.adjustment}
+                  </span>
+                )}
               </div>
 
               <div className="p-2 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs">
@@ -619,18 +665,33 @@ export const FloorProductInspectorModal = forwardRef<AuditCheckFormHandle, Floor
               </div>
             </div>
 
-            {/* View Stock IQ Details Button */}
-            {onViewStockIqDetails && (
-              <button
-                type="button"
-                onClick={onViewStockIqDetails}
-                className="w-full mt-2 py-2 px-3 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/70 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs active:scale-98 min-h-[40px]"
-                title="Open Stock IQ Product Inspector"
-              >
-                <Package className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-                <span>VIEW STOCK IQ DETAILS</span>
-              </button>
-            )}
+            {/* Purchase Contact & View Stock IQ Details Buttons */}
+            <div className="mt-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+              <PurchaseContactButton
+                product={{
+                  ...(product || {}),
+                  id: product?.id || result.productId,
+                  name: product?.name || result.productName,
+                  bansalCode: product?.bansalCode || (bansalCode === '—' ? undefined : bansalCode),
+                  localCode: product?.localCode || result.localCode,
+                  code: product?.code || result.code,
+                  barcode: product?.barcode || result.barcode,
+                }}
+                variant="full"
+                className="flex-1"
+              />
+              {onViewStockIqDetails && (
+                <button
+                  type="button"
+                  onClick={onViewStockIqDetails}
+                  className="flex-1 py-2 px-3 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/70 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs active:scale-98 min-h-[44px]"
+                  title="Open Stock IQ Product Inspector"
+                >
+                  <Package className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                  <span>VIEW STOCK IQ DETAILS</span>
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Extra uploaded columns drawer if any */}

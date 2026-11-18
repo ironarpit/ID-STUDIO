@@ -12,6 +12,7 @@ import {
 import { Product, AuditProductResult, AuditCheckFormHandle } from '../../types';
 import { formatCleanSalesPeriod } from '../../utils/fileParser';
 import { useModalTransition } from '../../utils/useModalTransition';
+import { PurchaseContactButton } from '../PurchaseContactSheet';
 
 interface FocusProductCheckModalProps {
   isOpen: boolean;
@@ -138,6 +139,15 @@ export const FocusProductCheckModal = forwardRef<AuditCheckFormHandle, FocusProd
   useImperativeHandle(ref, () => ({
     submitValidated: async (advanceToNext: boolean) => {
       return await handleSave(advanceToNext);
+    },
+    getDraftValues: () => {
+      const hasAnswers = display !== undefined || board !== undefined;
+      return {
+        display,
+        board,
+        boardType,
+        status: (display && board) ? 'done' : result.status,
+      };
     }
   }));
 
@@ -335,11 +345,46 @@ export const FocusProductCheckModal = forwardRef<AuditCheckFormHandle, FocusProd
                 </span>
               </div>
               {/* Closing Stock */}
-              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80 shadow-2xs">
-                <span className="text-[10px] text-slate-400 font-sans uppercase font-bold block">Closing</span>
-                <span className={`font-bold text-sm ${isAmbiguous ? 'text-amber-600 text-xs' : 'text-indigo-600 dark:text-indigo-400'}`}>
+              <div
+                className={`p-2.5 rounded-xl border shadow-2xs ${
+                  liveProduct?.stockVariation
+                    ? 'bg-amber-50 dark:bg-amber-950/70 border-amber-300 dark:border-amber-700'
+                    : 'bg-slate-50 dark:bg-slate-800/60 border-slate-200/80 dark:border-slate-700/80'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span
+                    className={`text-[10px] font-sans uppercase font-bold block ${
+                      liveProduct?.stockVariation ? 'text-amber-800 dark:text-amber-300' : 'text-slate-400'
+                    }`}
+                  >
+                    {liveProduct?.stockVariation ? 'Adjusted' : 'Closing'}
+                  </span>
+                  {liveProduct?.stockVariation && (
+                    <span className="text-[8px] font-black uppercase px-1 py-0.2 rounded bg-amber-200 dark:bg-amber-900 text-amber-900 dark:text-amber-200">
+                      Var
+                    </span>
+                  )}
+                </div>
+                <span
+                  className={`font-bold text-sm block truncate ${
+                    isAmbiguous
+                      ? 'text-amber-600 text-xs'
+                      : liveProduct?.stockVariation
+                      ? 'text-amber-900 dark:text-amber-100'
+                      : 'text-indigo-600 dark:text-indigo-400'
+                  }`}
+                >
                   {liveClosingDisplay}
                 </span>
+                {liveProduct?.stockVariation && liveProduct?.systemStock !== undefined && (
+                  <span className="text-[9px] font-bold text-amber-700 dark:text-amber-300 block truncate mt-0.5">
+                    Sys: {liveProduct.systemStock} | Var:{' '}
+                    {liveProduct.stockVariation.adjustment > 0
+                      ? `+${liveProduct.stockVariation.adjustment}`
+                      : liveProduct.stockVariation.adjustment}
+                  </span>
+                )}
               </div>
               {/* Sales Qty */}
               <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80 shadow-2xs">
@@ -360,18 +405,33 @@ export const FocusProductCheckModal = forwardRef<AuditCheckFormHandle, FocusProd
             </div>
           </div>
 
-          {/* View Stock IQ Details Button */}
-          {onViewStockIqDetails && (
-            <button
-              type="button"
-              onClick={onViewStockIqDetails}
-              className="w-full mt-2.5 py-2 px-3 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/70 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs active:scale-98 min-h-[40px]"
-              title="Open Stock IQ Product Inspector"
-            >
-              <Package className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-              <span>VIEW STOCK IQ DETAILS</span>
-            </button>
-          )}
+          {/* Purchase Contact & View Stock IQ Details Buttons */}
+          <div className="mt-2.5 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+            <PurchaseContactButton
+              product={{
+                ...(liveProduct || {}),
+                id: liveProduct?.id || result.productId,
+                name: liveProduct?.name || result.productName,
+                bansalCode: liveProduct?.bansalCode || result.bansalCode,
+                localCode: liveProduct?.localCode || result.localCode,
+                code: liveProduct?.code || result.code,
+                barcode: liveProduct?.barcode || result.barcode,
+              }}
+              variant="full"
+              className="flex-1"
+            />
+            {onViewStockIqDetails && (
+              <button
+                type="button"
+                onClick={onViewStockIqDetails}
+                className="flex-1 py-2 px-3 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/70 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs active:scale-98 min-h-[44px]"
+                title="Open Stock IQ Product Inspector"
+              >
+                <Package className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                <span>VIEW STOCK IQ DETAILS</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* 3 Physical Check Fields */}

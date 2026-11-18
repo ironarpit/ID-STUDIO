@@ -19,10 +19,13 @@ import {
   ChevronDown,
   ChevronUp,
   ChevronRight,
-  BookmarkCheck
+  BookmarkCheck,
+  Users
 } from 'lucide-react';
 import { BarcodeMasterUploadModal } from './BarcodeMasterUploadModal';
 import { BarcodeOverridesManager } from './BarcodeOverridesManager';
+import { PurchaseResponsibilityUploadModal } from './PurchaseResponsibilityUploadModal';
+import { usePurchaseContact } from '../context/PurchaseContactContext';
 import { StoreInfo, fetchBarcodeMasterStatus } from '../utils/api';
 import { BarcodeMasterStatus, StockReportMeta, FocusMaster, FocusType, Product } from '../types';
 import { clearBarcodeMasterDB } from '../utils/indexedDB';
@@ -432,17 +435,29 @@ export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
 }) => {
   const [confirmClearStock, setConfirmClearStock] = useState(false);
   const [confirmClearBarcode, setConfirmClearBarcode] = useState(false);
+  const [confirmClearPurchase, setConfirmClearPurchase] = useState(false);
   const [confirmClearCoreFocus, setConfirmClearCoreFocus] = useState(false);
   const [confirmClearNonCoreFocus, setConfirmClearNonCoreFocus] = useState(false);
   const [confirmResetApp, setConfirmResetApp] = useState(false);
 
   // Mobile Accordion State (all collapsed by default, only one open at a time)
-  type MobileSectionKey = 'stock' | 'barcode' | 'overrides' | 'core' | 'non_core' | 'offline' | null;
+  type MobileSectionKey = 'stock' | 'barcode' | 'purchase' | 'overrides' | 'core' | 'non_core' | 'offline' | null;
   const [mobileExpandedSection, setMobileExpandedSection] = useState<MobileSectionKey>(null);
 
   const toggleMobileSection = (section: MobileSectionKey) => {
     setMobileExpandedSection(prev => (prev === section ? null : section));
   };
+
+  // Purchase Responsibility Master State
+  const {
+    meta: purchaseMeta,
+    isLoading: isLoadingPurchase,
+    storageError: purchaseStorageError,
+    clearStorageError: clearPurchaseStorageError,
+    reloadMaster: reloadPurchaseMaster,
+    removeMaster: removePurchaseMaster
+  } = usePurchaseContact();
+  const [isPurchaseUploadModalOpen, setIsPurchaseUploadModalOpen] = useState<boolean>(false);
 
   // Barcode Master State
   const [barcodeMaster, setBarcodeMaster] = useState<BarcodeMasterStatus | null>(null);
@@ -468,6 +483,12 @@ export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
       loadBarcodeMaster();
     }
   }, [isOpen, loadBarcodeMaster]);
+
+  const { handleClose, backdropClass, panelClass } = useModalTransition({
+    onClose,
+    isOpen,
+    duration: 170
+  });
 
   if (!isOpen) return null;
 
@@ -498,12 +519,6 @@ export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
       console.error('Failed to clear Barcode Master:', err);
     }
   };
-
-  const { handleClose, backdropClass, panelClass } = useModalTransition({
-    onClose,
-    isOpen: true,
-    duration: 170
-  });
 
   return (
     <>
@@ -753,6 +768,145 @@ export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
                         onClick={() => setConfirmClearBarcode(true)}
                         className="min-h-[38px] min-w-[38px] p-2 rounded-xl text-xs font-semibold inline-flex items-center justify-center cursor-pointer bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/50 border border-rose-200 dark:border-rose-800/80 text-rose-600 dark:text-rose-400"
                         title="Clear Barcode Master Database"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </MobileAccordionRow>
+
+              {/* 2B. PURCHASE RESPONSIBILITY MASTER ACCORDION */}
+              <MobileAccordionRow
+                id="mobile-purchase-responsibility-accordion"
+                icon={<Users className="w-3.5 h-3.5" />}
+                iconBgColor="bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border-emerald-100 dark:border-emerald-800/60"
+                title="Purchase Responsibility Master"
+                badge={{
+                  label: isLoadingPurchase && !purchaseMeta ? 'Checking...' : purchaseStorageError ? 'Attention' : purchaseMeta ? 'Active' : 'Not Loaded',
+                  variant: isLoadingPurchase && !purchaseMeta ? 'loading' : purchaseStorageError ? 'warning' : purchaseMeta ? 'active' : 'inactive'
+                }}
+                count={purchaseMeta ? `${purchaseMeta.uniqueProductCodesCount.toLocaleString('en-IN')} Codes` : null}
+                isOpen={mobileExpandedSection === 'purchase'}
+                onToggle={() => toggleMobileSection('purchase')}
+              >
+                <div className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-800 rounded-xl px-2.5 py-2 space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <div className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 border ${purchaseMeta ? 'bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 border-slate-200 dark:border-slate-700' : 'bg-slate-100 dark:bg-slate-800/80 text-slate-400 dark:text-slate-500 border-slate-200/60 dark:border-slate-700/60'}`}>
+                        <FileSpreadsheet className="w-3.5 h-3.5" />
+                      </div>
+                      <p className={`text-xs font-bold truncate ${purchaseMeta ? 'text-slate-900 dark:text-white' : 'text-slate-400 dark:text-slate-500 italic'}`}>
+                        {purchaseMeta ? purchaseMeta.fileName : 'No master uploaded'}
+                      </p>
+                    </div>
+                    {purchaseMeta && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-black font-mono bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-200/70 dark:border-emerald-800/60 shrink-0">
+                        {purchaseMeta.uniqueProductCodesCount.toLocaleString('en-IN')} Codes
+                      </span>
+                    )}
+                  </div>
+                  {purchaseMeta && (
+                    <div className="text-[10.5px] text-slate-500 dark:text-slate-400 flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-8">
+                      <span>Sheet: {purchaseMeta.sheetName}</span>
+                      <span>•</span>
+                      <span>Imported: {new Date(purchaseMeta.importedAt).toLocaleString()}</span>
+                      <span>•</span>
+                      <span>{purchaseMeta.validAssignmentsCount.toLocaleString('en-IN')} assignments</span>
+                    </div>
+                  )}
+                </div>
+
+                {purchaseStorageError && (
+                  <div className="bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/80 rounded-lg p-2 text-xs text-rose-700 dark:text-rose-300 flex items-center justify-between gap-2">
+                    <div className="flex items-start gap-1.5 min-w-0">
+                      <AlertCircle className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+                      <span className="text-[10.5px] leading-snug">{purchaseStorageError}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearPurchaseStorageError();
+                        reloadPurchaseMaster();
+                      }}
+                      className="text-[11px] font-bold text-rose-700 dark:text-rose-300 underline cursor-pointer shrink-0"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                )}
+
+                {purchaseMeta && (purchaseMeta.conflictingCodesCount > 0 || purchaseMeta.missingOrInvalidPhoneCount > 0) && (
+                  <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/70 rounded-lg px-2.5 py-1.5 text-[11px] text-amber-900 dark:text-amber-200 flex items-start gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                    <span>
+                      {purchaseMeta.conflictingCodesCount > 0 ? `${purchaseMeta.conflictingCodesCount} code conflict(s)` : ''}
+                      {purchaseMeta.conflictingCodesCount > 0 && purchaseMeta.missingOrInvalidPhoneCount > 0 ? ' • ' : ''}
+                      {purchaseMeta.missingOrInvalidPhoneCount > 0 ? `${purchaseMeta.missingOrInvalidPhoneCount} missing/invalid phone(s)` : ''}
+                    </span>
+                  </div>
+                )}
+
+                <p className="text-[10.5px] text-slate-500 dark:text-slate-400 leading-snug">
+                  Saved on this device/browser only. Stock Report uploads never overwrite purchase contacts.
+                </p>
+
+                {confirmClearPurchase && (
+                  <div className="bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/80 rounded-xl p-2.5 space-y-1.5 animate-fade-in">
+                    <div className="flex items-center gap-1.5 text-rose-800 dark:text-rose-200 font-bold text-xs">
+                      <Trash2 className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0" />
+                      <span>Remove Purchase Responsibility Master?</span>
+                    </div>
+                    <p className="text-[11px] text-rose-700 dark:text-rose-300 font-medium leading-relaxed">
+                      All saved purchase contacts on this device will be removed immediately and product cards will show &ldquo;Purchase contact not assigned.&rdquo;
+                    </p>
+                    <div className="flex items-center justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setConfirmClearPurchase(false)}
+                        className="px-3 py-1.5 min-h-[36px] bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-xs font-semibold cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await removePurchaseMaster();
+                          setConfirmClearPurchase(false);
+                        }}
+                        className="px-3.5 py-1.5 min-h-[36px] bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold cursor-pointer shadow-2xs"
+                      >
+                        Remove Master
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={reloadPurchaseMaster}
+                    disabled={isLoadingPurchase}
+                    className="p-2 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer min-h-[38px] min-w-[38px] flex items-center justify-center"
+                    title="Refresh Purchase Master Status"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isLoadingPurchase ? 'animate-spin text-indigo-600 dark:text-indigo-400' : ''}`} />
+                  </button>
+                  <div className="flex items-center gap-1.5 justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setIsPurchaseUploadModalOpen(true)}
+                      className="min-h-[38px] px-3.5 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white shadow-2xs cursor-pointer"
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>{purchaseMeta ? 'Replace Master' : 'Upload Master'}</span>
+                    </button>
+                    {purchaseMeta && (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmClearPurchase(true)}
+                        className="min-h-[38px] min-w-[38px] p-2 rounded-xl text-xs font-semibold inline-flex items-center justify-center cursor-pointer bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/50 border border-rose-200 dark:border-rose-800/80 text-rose-600 dark:text-rose-400"
+                        title="Remove Purchase Responsibility Master"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -1144,6 +1298,107 @@ export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
                 }}
               />
 
+              {/* 2B. PURCHASE RESPONSIBILITY MASTER */}
+              <UniformUploadCard
+                id="admin-purchase-responsibility-card"
+                icon={<Users className="w-3.5 h-3.5" />}
+                iconBgColor="bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border-emerald-100 dark:border-emerald-800/60"
+                title="Purchase Responsibility Master"
+                headerAction={
+                  <button
+                    type="button"
+                    onClick={reloadPurchaseMaster}
+                    disabled={isLoadingPurchase}
+                    className="p-1 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors cursor-pointer disabled:opacity-50"
+                    title="Refresh Purchase Master Status"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isLoadingPurchase ? 'animate-spin text-indigo-600 dark:text-indigo-400' : ''}`} />
+                  </button>
+                }
+                badge={{
+                  label: isLoadingPurchase && !purchaseMeta ? 'Checking...' : purchaseStorageError ? 'Attention' : purchaseMeta ? 'Active' : 'Not Loaded',
+                  variant: isLoadingPurchase && !purchaseMeta ? 'loading' : purchaseStorageError ? 'warning' : purchaseMeta ? 'active' : 'inactive'
+                }}
+                isLoaded={Boolean(purchaseMeta)}
+                fileName={purchaseMeta?.fileName || null}
+                summaryCount={
+                  purchaseMeta
+                    ? `${purchaseMeta.uniqueProductCodesCount.toLocaleString('en-IN')} Codes`
+                    : null
+                }
+                banner={
+                  purchaseStorageError || (purchaseMeta && (purchaseMeta.conflictingCodesCount > 0 || purchaseMeta.missingOrInvalidPhoneCount > 0)) ? (
+                    <div className="space-y-1.5">
+                      {purchaseStorageError && (
+                        <div className="bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/80 rounded-lg p-2 text-xs text-rose-700 dark:text-rose-300 flex items-center justify-between gap-2">
+                          <div className="flex items-start gap-1.5 min-w-0">
+                            <AlertCircle className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
+                            <span className="text-[10.5px] leading-snug">{purchaseStorageError}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              clearPurchaseStorageError();
+                              reloadPurchaseMaster();
+                            }}
+                            className="text-[11px] font-bold text-rose-700 dark:text-rose-300 underline cursor-pointer shrink-0"
+                          >
+                            Retry
+                          </button>
+                        </div>
+                      )}
+                      {purchaseMeta && (purchaseMeta.conflictingCodesCount > 0 || purchaseMeta.missingOrInvalidPhoneCount > 0) && (
+                        <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/70 rounded-lg px-2.5 py-1.5 text-[11px] text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                          <span>
+                            {purchaseMeta.conflictingCodesCount > 0 ? `${purchaseMeta.conflictingCodesCount} code conflict(s)` : ''}
+                            {purchaseMeta.conflictingCodesCount > 0 && purchaseMeta.missingOrInvalidPhoneCount > 0 ? ' • ' : ''}
+                            {purchaseMeta.missingOrInvalidPhoneCount > 0 ? `${purchaseMeta.missingOrInvalidPhoneCount} missing/invalid phone(s)` : ''}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ) : null
+                }
+                primaryAction={{
+                  label: purchaseMeta ? 'Replace Master' : 'Upload Master',
+                  icon: <Upload className="w-3.5 h-3.5" />,
+                  onClick: () => setIsPurchaseUploadModalOpen(true),
+                  title: 'Upload or Replace Purchase Responsibility Master'
+                }}
+                secondaryAction={
+                  purchaseMeta
+                    ? {
+                        icon: <Trash2 className="w-3.5 h-3.5" />,
+                        onClick: () => setConfirmClearPurchase(true),
+                        title: 'Remove Purchase Responsibility Master'
+                      }
+                    : undefined
+                }
+                confirmPrompt={{
+                  isOpen: confirmClearPurchase,
+                  title: 'Remove Purchase Responsibility Master?',
+                  description: 'All saved purchase contacts on this device will be deleted immediately and products will show "Purchase contact not assigned."',
+                  confirmLabel: 'Remove Master',
+                  onCancel: () => setConfirmClearPurchase(false),
+                  onConfirm: async () => {
+                    await removePurchaseMaster();
+                    setConfirmClearPurchase(false);
+                  }
+                }}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[10.5px] text-slate-500 dark:text-slate-400 px-0.5">
+                  <span>
+                    {purchaseMeta
+                      ? `Sheet: ${purchaseMeta.sheetName} • Imported: ${new Date(purchaseMeta.importedAt).toLocaleString()} • ${purchaseMeta.validAssignmentsCount.toLocaleString('en-IN')} assignments`
+                      : 'Upload Excel/CSV with BANSAL CODE, ITEM NAME, PURCHASE NAME, PUCHASE NB'}
+                  </span>
+                  <span className="font-medium text-slate-600 dark:text-slate-300">
+                    Saved on this device/browser
+                  </span>
+                </div>
+              </UniformUploadCard>
+
               {/* 3. BARCODE OVERRIDES SECTION */}
               <div
                 id="admin-barcode-overrides-card"
@@ -1351,6 +1606,11 @@ export const AdminSettingsModal: React.FC<AdminSettingsModalProps> = ({
         onSuccess={() => {
           loadBarcodeMaster();
         }}
+      />
+
+      <PurchaseResponsibilityUploadModal
+        isOpen={isPurchaseUploadModalOpen}
+        onClose={() => setIsPurchaseUploadModalOpen(false)}
       />
     </>
   );

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -12,7 +12,8 @@ import {
   Calendar,
   X,
   Filter,
-  Camera
+  Camera,
+  Zap
 } from 'lucide-react';
 import {
   AuditSession,
@@ -22,7 +23,12 @@ import {
   AuditCheckFormHandle
 } from '../../types';
 import { saveProductResult, saveAuditSessionDB } from '../../utils/auditStorage';
-import { exportAuditSessionToExcel, exportFocusAuditToExcel } from '../../utils/auditExport';
+import {
+  exportAuditSessionToExcel,
+  exportFocusAuditToExcel,
+  exportZeroSaleAuditToExcel,
+  exportDailyPurchaseAuditToExcel
+} from '../../utils/auditExport';
 import { cleanDateOnly, formatCleanSalesPeriod } from '../../utils/fileParser';
 import { matchesMainCodeFilter, normalizeMainCode, matchesCategoryFilter } from '../../utils/mainCode';
 import { normalizeLocalCode } from '../../utils/barcodeResolver';
@@ -42,7 +48,6 @@ import { DailyPurchaseCheckModal } from './DailyPurchaseCheckModal';
 import { ProductDetailModal } from '../ProductDetailModal';
 import { BarcodeLabelModal } from '../BarcodeLabelModal';
 import { computeAllProductAnalytics } from '../../utils/analytics';
-import { exportDailyPurchaseAuditToExcel } from '../../utils/auditExport';
 import { formatDailyPurchaseWhatsAppText } from '../../utils/copyUtils';
 
 interface FloorAuditRunnerProps {
@@ -93,9 +98,19 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'checked' | 'not_on_floor' | 'board_incorrect' | 'flagged'>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
+  // Quick Count Mode State (Normal mode is default)
+  const [isQuickCountMode, setIsQuickCountMode] = useState<boolean>(() => {
+    if (typeof initialSession.isQuickCountMode === 'boolean') return initialSession.isQuickCountMode;
+    return localStorage.getItem(`quick_count_mode_${initialSession.id}`) === 'true';
+  });
+  const [quickCountFilter, setQuickCountFilter] = useState<'all' | 'scanned' | 'not_scanned'>('all');
+  const [duplicateScanCount, setDuplicateScanCount] = useState<number>(() => initialSession.quickCountDuplicateCount || 0);
+  const lastScanRef = useRef<{ barcode: string; time: number } | null>(null);
+
   const isFocusAudit = session.type === 'core_focus' || session.type === 'non_core_focus';
   const isCoreFocus = session.type === 'core_focus';
   const isDailyPurchase = session.type === 'daily_purchase';
+  const isZeroSale = session.type === 'zero_sales' || (session.title && session.title.toLowerCase().includes('zero sale'));
 
   // Pre-indexed map of live Stock IQ products by exact 9-digit normalized Bansal / Local Code
   const liveStockByCodeMap = useMemo(() => {
@@ -286,7 +301,53 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
     setInspectingResult(res);
   };
 
-  const handleCloseInspector = () => {
+  // Quick Count Mode: Auto-commit current inspecting product as counted
+  // Preserves any answers/remarks already entered; never clears or overwrites existing answers
+  const commitCurrentProductQuickCount = async (targetToCommit: AuditProductResult): Promise<AuditProductResult> => {
+    const draftValues = activeFormRef.current?.getDraftValues ? activeFormRef.current.getDraftValues() : {};
+    const checkerToSave = activeChecker || targetToCommit.checkedBy || 'Floor Checker';
+    
+    // Status is preserved: if user checked boxes, use that status; if pending, it stays pending with isQuickCountScanned=true
+    const updatedStatus = draftValues.status || targetToCommit.status;
+
+    const payload: AuditProductResult = {
+      ...targetToCommit,
+      ...draftValues,
+      isQuickCountScanned: true,
+      quickCountScannedAt: targetToCommit.quickCountScannedAt || new Date().toISOString(),
+      checkedBy: draftValues.checkedBy || checkerToSave,
+      status: updatedStatus,
+    };
+
+    const { session: updatedS, result: savedR } = await saveProductResult(payload);
+    if (updatedS) {
+      setSession(updatedS);
+    }
+    setResultsMap((prev) => ({
+      ...prev,
+      [savedR.productId]: savedR,
+    }));
+    setIsModalDirty(false);
+    return savedR;
+  };
+
+  const handleToggleQuickCountMode = (enabled: boolean) => {
+    setIsQuickCountMode(enabled);
+    localStorage.setItem(`quick_count_mode_${session.id}`, String(enabled));
+    const updated = { ...session, isQuickCountMode: enabled, quickCountDuplicateCount: duplicateScanCount };
+    setSession(updated);
+    saveAuditSessionDB(updated).catch(() => {});
+    showRunnerToast(enabled ? '⚡ Quick Count Mode enabled' : 'Normal Audit Mode enabled', 'info');
+  };
+
+  const handleCloseInspector = async () => {
+    if (isQuickCountMode && inspectingResult) {
+      try {
+        await commitCurrentProductQuickCount(inspectingResult);
+      } catch (err) {
+        console.error('Error auto-committing on close in Quick Count Mode:', err);
+      }
+    }
     setInspectingResult(null);
     restoreScrollPosition();
   };
@@ -330,8 +391,28 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
     });
   }, [session.productIds, resultsMap, products, session.id, session.storeId]);
 
-  // Base predicate for operational filters (status, search query)
+  // Quick Count Scan Predicate & Totals
+  const isProductScanned = useCallback((r: AuditProductResult) => {
+    return Boolean(r.isQuickCountScanned || r.status === 'done' || r.status === 'resolved' || r.status === 'flagged');
+  }, []);
+
+  const quickCountScannedTotal = useMemo(() => {
+    return allResultsList.filter((r) => isProductScanned(r)).length;
+  }, [allResultsList, isProductScanned]);
+
+  const quickCountNotScannedTotal = useMemo(() => {
+    return allResultsList.length - quickCountScannedTotal;
+  }, [allResultsList.length, quickCountScannedTotal]);
+
+  // Base predicate for operational filters (status, search query, quick count filter)
   const baseAuditPredicate = useCallback((r: AuditProductResult) => {
+    // Quick Count filter (when Quick Count Mode is active)
+    if (isQuickCountMode) {
+      const scanned = isProductScanned(r);
+      if (quickCountFilter === 'scanned' && !scanned) return false;
+      if (quickCountFilter === 'not_scanned' && scanned) return false;
+    }
+
     // Status filter
     if (statusFilter === 'pending' && r.status !== 'pending') return false;
     if (statusFilter === 'checked' && r.status !== 'done' && r.status !== 'resolved') return false;
@@ -357,11 +438,11 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
     }
 
     return true;
-  }, [statusFilter, searchQuery, products]);
+  }, [isQuickCountMode, quickCountFilter, isProductScanned, statusFilter, searchQuery, products]);
 
   // Bidirectional linked options computation
   const linkedAuditResult = useMemo(() => {
-    return computeLinkedClassificationOptions(
+    return computeLinkedClassificationOptions<AuditProductResult>(
       allResultsList,
       {
         getMainCode: (r) => {
@@ -400,11 +481,19 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
   // Context-aware hardware / camera barcode scanner listener: SCAN -> OPEN -> REPLACE
   useEffect(() => {
     // 1. Matched in active audit
-    const handleLocateEvent = (e: Event) => {
+    const handleLocateEvent = async (e: Event) => {
       if (isSavingRef.current) return;
       const customEv = e as CustomEvent<{ productId: string; bansalCode?: string; barcode?: string }>;
       if (!customEv.detail) return;
       const { productId, bansalCode, barcode } = customEv.detail;
+
+      // Debounce burst duplicate scanner events (< 400ms)
+      const scanKey = barcode || bansalCode || productId;
+      const now = Date.now();
+      if (lastScanRef.current && lastScanRef.current.barcode === scanKey && (now - lastScanRef.current.time) < 400) {
+        return;
+      }
+      lastScanRef.current = { barcode: scanKey, time: now };
 
       const target = allResultsList.find(
         (r) =>
@@ -430,7 +519,36 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
         }, 2500);
       }
 
-      // If active modal is open with unsaved changes on a DIFFERENT product: protect edits!
+      // Quick Count Mode: Auto-commit previous product & immediately open new target
+      if (isQuickCountMode) {
+        if (inspectingResult && inspectingResult.productId !== target.productId) {
+          try {
+            await commitCurrentProductQuickCount(inspectingResult);
+          } catch (err) {
+            console.error('Error auto-committing previous product in Quick Count Mode:', err);
+          }
+        }
+
+        const currentTargetRes = resultsMap[target.productId] || target;
+        const alreadyCounted = isProductScanned(currentTargetRes);
+        if (alreadyCounted) {
+          setDuplicateScanCount((prev) => {
+            const next = prev + 1;
+            const updated = { ...session, quickCountDuplicateCount: next };
+            setSession(updated);
+            saveAuditSessionDB(updated).catch(() => {});
+            return next;
+          });
+          showRunnerToast(`Duplicate scan: "${target.productName}" (already counted).`, 'info');
+        } else {
+          showRunnerToast(`Counted: "${target.productName}"`, 'success');
+        }
+
+        handleOpenInspector(currentTargetRes);
+        return;
+      }
+
+      // Normal Mode (existing behavior):
       if (inspectingResult && inspectingResult.productId !== target.productId && isModalDirty) {
         setPendingScan({
           type: 'open_product',
@@ -456,6 +574,12 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
 
       // Always dismiss top Stock IQ inspector
       setStockInspectorProduct(null);
+
+      if (isQuickCountMode) {
+        // Do not count products outside active audit list
+        showRunnerToast(`"${detail?.productName || detail?.barcode || 'Scanned product'}" is not part of this audit.`, 'error');
+        return;
+      }
 
       if (inspectingResult && isModalDirty) {
         setPendingScan({
@@ -484,6 +608,12 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
       // Always dismiss top Stock IQ inspector
       setStockInspectorProduct(null);
 
+      if (isQuickCountMode) {
+        // Do not count unknown barcodes
+        showRunnerToast(`Barcode ${detail?.barcode || ''} not found in catalog or audit.`, 'error');
+        return;
+      }
+
       if (inspectingResult && isModalDirty) {
         setPendingScan({
           type: 'not_found',
@@ -509,7 +639,7 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
       window.removeEventListener('floor-audit-scan-not-in-audit', handleNotInAuditEvent);
       window.removeEventListener('floor-audit-scan-not-found', handleNotFoundEvent);
     };
-  }, [allResultsList, resultsMap, inspectingResult, isModalDirty]);
+  }, [allResultsList, resultsMap, inspectingResult, isModalDirty, isQuickCountMode, isProductScanned, session]);
 
   // Standard Audit Counts
   const totalCount = allResultsList.length;
@@ -852,7 +982,26 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
     }
   };
 
+  const handleBackToHub = async () => {
+    if (isQuickCountMode && inspectingResult) {
+      try {
+        await commitCurrentProductQuickCount(inspectingResult);
+      } catch (err) {
+        console.error('Error auto-committing on back in Quick Count Mode:', err);
+      }
+    }
+    onBackToHub();
+  };
+
   const handleFinishAudit = async () => {
+    if (isQuickCountMode && inspectingResult) {
+      try {
+        await commitCurrentProductQuickCount(inspectingResult);
+      } catch (err) {
+        console.error('Error auto-committing on finish in Quick Count Mode:', err);
+      }
+    }
+
     const confirmed = window.confirm(
       `Finish this audit session? ${checkedCount} of ${totalCount} products have been checked.`
     );
@@ -868,11 +1017,19 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
     await saveAuditSessionDB(updatedS);
   };
 
-  const handleExportFocusExcel = () => {
+  const handleExportExcel = async () => {
     try {
-      exportFocusAuditToExcel(session, allResultsList);
+      if (isZeroSale) {
+        await exportZeroSaleAuditToExcel(session, allResultsList);
+      } else if (isDailyPurchase) {
+        await exportDailyPurchaseAuditToExcel(session, allResultsList);
+      } else if (isFocusAudit) {
+        await exportFocusAuditToExcel(session, allResultsList);
+      } else {
+        await exportAuditSessionToExcel(session, allResultsList);
+      }
     } catch (err: any) {
-      console.error('Failed to export focus audit to Excel:', err);
+      console.error('Failed to export audit to Excel:', err);
       alert('Error exporting Excel: ' + (err?.message || 'Please try again.'));
     }
   };
@@ -1022,6 +1179,7 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
     setSelectedMainCodes([]);
     setSelectedCategories([]);
     setStatusFilter('all');
+    setQuickCountFilter('all');
     setSearchQuery('');
   };
 
@@ -1092,7 +1250,7 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
         {/* Left: Back Button */}
         <button
           type="button"
-          onClick={onBackToHub}
+          onClick={handleBackToHub}
           className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer shrink-0 min-h-[44px] min-w-[44px] justify-center"
           title="Back to Previous View"
         >
@@ -1174,27 +1332,29 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
             </button>
           )}
 
-          {selectedMainCode !== 'all' && (
+          {selectedMainCodes.map((mc) => (
             <button
+              key={mc}
               type="button"
-              onClick={() => setSelectedMainCode('all')}
+              onClick={() => setSelectedMainCodes(selectedMainCodes.filter((m) => m !== mc))}
               className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 text-[11px] font-bold cursor-pointer hover:bg-slate-200"
             >
-              <span>MC: {selectedMainCode}</span>
+              <span>MC: {mc}</span>
               <X className="w-3 h-3" />
             </button>
-          )}
+          ))}
 
-          {selectedCategory !== 'all' && (
+          {selectedCategories.map((cat) => (
             <button
+              key={cat}
               type="button"
-              onClick={() => setSelectedCategory('all')}
+              onClick={() => setSelectedCategories(selectedCategories.filter((c) => c !== cat))}
               className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 text-[11px] font-bold cursor-pointer hover:bg-slate-200"
             >
-              <span>Cat: {selectedCategory}</span>
+              <span>Cat: {cat}</span>
               <X className="w-3 h-3" />
             </button>
-          )}
+          ))}
 
           {searchQuery && (
             <button
@@ -1252,6 +1412,84 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
             </span>
           </div>
         )}
+
+        {/* Quick Count Mode & Filter Bar */}
+        <div className={`p-2 sm:p-2.5 rounded-xl border flex flex-col md:flex-row md:items-center justify-between gap-2 text-xs transition-all ${
+          isQuickCountMode
+            ? isDarkMode
+              ? 'bg-emerald-950/30 border-emerald-800 text-emerald-100'
+              : 'bg-emerald-50/90 border-emerald-300 text-emerald-950 shadow-2xs'
+            : isDarkMode
+            ? 'bg-slate-800/60 border-slate-700/80 text-slate-200'
+            : 'bg-slate-50 border-slate-200 text-slate-800'
+        }`}>
+          {/* Toggle Button & Live Counter */}
+          <div className="flex items-center justify-between sm:justify-start gap-2.5 flex-wrap">
+            <button
+              type="button"
+              onClick={() => handleToggleQuickCountMode(!isQuickCountMode)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs min-h-[38px] ${
+                isQuickCountMode
+                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                  : 'bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200'
+              }`}
+              title="Toggle Quick Count Mode"
+            >
+              <Zap className="w-3.5 h-3.5" />
+              <span>Quick Count Mode: {isQuickCountMode ? 'ON' : 'OFF'}</span>
+            </button>
+
+            <div className="flex items-center gap-1.5 font-mono text-xs">
+              <span className={`font-bold ${isQuickCountMode ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-600 dark:text-slate-400'}`}>
+                Products Counted: <strong className="font-black text-slate-900 dark:text-white">{quickCountScannedTotal} / {totalCount}</strong>
+              </span>
+              {duplicateScanCount > 0 && (
+                <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">
+                  ({duplicateScanCount} duplicate scan{duplicateScanCount > 1 ? 's' : ''})
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Quick Count Filter Tabs: All Products (N) | Scanned (X) | Not Scanned (Y) */}
+          {isQuickCountMode && (
+            <div className="flex items-center gap-1 bg-white/90 dark:bg-slate-900/90 p-1 rounded-xl border border-emerald-300 dark:border-emerald-800/80 shrink-0">
+              <button
+                type="button"
+                onClick={() => setQuickCountFilter('all')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  quickCountFilter === 'all'
+                    ? 'bg-emerald-600 text-white shadow-2xs'
+                    : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                All Products ({totalCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setQuickCountFilter('scanned')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  quickCountFilter === 'scanned'
+                    ? 'bg-emerald-600 text-white shadow-2xs'
+                    : 'text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100/60 dark:hover:bg-emerald-950/60'
+                }`}
+              >
+                Scanned ({quickCountScannedTotal})
+              </button>
+              <button
+                type="button"
+                onClick={() => setQuickCountFilter('not_scanned')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  quickCountFilter === 'not_scanned'
+                    ? 'bg-slate-800 text-white dark:bg-slate-700 shadow-2xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                Not Scanned ({quickCountNotScannedTotal})
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* Quick Search and Action Row */}
         <div className="flex items-center gap-2">
@@ -1315,7 +1553,7 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
           </div>
           <button
             type="button"
-            onClick={() => exportAuditSessionToExcel(session, allResultsList)}
+            onClick={handleExportExcel}
             className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg shadow-xs cursor-pointer active:scale-95 transition-all shrink-0 min-h-[38px]"
           >
             <FileSpreadsheet className="w-4 h-4" />
@@ -1354,6 +1592,8 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
                       ? 'bg-amber-50/40 dark:bg-amber-950/10 border-amber-200 dark:border-amber-900/50'
                       : isChecked
                       ? 'bg-emerald-50/40 dark:bg-emerald-950/10 border-emerald-200 dark:border-emerald-900/50'
+                      : isQuickCountMode && isProductScanned(res)
+                      ? 'bg-emerald-50/30 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800/80 shadow-2xs'
                       : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800'
                   }`}
                 >
@@ -1365,25 +1605,39 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
                       </h4>
 
                       {/* Status Badges */}
-                      <span
-                        className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded border shrink-0 ${
-                          isActionRequired
-                            ? 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950 dark:text-rose-200 dark:border-rose-700'
+                      <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
+                        {isQuickCountMode && (
+                          <span
+                            className={`text-[9px] font-black uppercase px-2 py-0.5 rounded border shrink-0 flex items-center gap-0.5 ${
+                              isProductScanned(res)
+                                ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200 dark:border-emerald-700'
+                                : 'bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'
+                            }`}
+                          >
+                            {isProductScanned(res) ? '✓ SCANNED' : 'NOT SCANNED'}
+                          </span>
+                        )}
+
+                        <span
+                          className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded border shrink-0 ${
+                            isActionRequired
+                              ? 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950 dark:text-rose-200 dark:border-rose-700'
+                              : isNotOnFloor
+                              ? 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-200 dark:border-amber-700'
+                              : isChecked
+                              ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200 dark:border-emerald-700'
+                              : 'bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700'
+                          }`}
+                        >
+                          {isActionRequired
+                            ? 'Action Required'
                             : isNotOnFloor
-                            ? 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-200 dark:border-amber-700'
+                            ? 'Checked • Not On Floor'
                             : isChecked
-                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-200 dark:border-emerald-700'
-                            : 'bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700'
-                        }`}
-                      >
-                        {isActionRequired
-                          ? 'Action Required'
-                          : isNotOnFloor
-                          ? 'Checked • Not On Floor'
-                          : isChecked
-                          ? 'Checked'
-                          : 'Pending'}
-                      </span>
+                            ? 'Checked'
+                            : 'Pending'}
+                        </span>
+                      </div>
                     </div>
 
                     {/* Card Metadata Section */}
@@ -1796,7 +2050,7 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
             liveProduct={liveMatch.product}
             isAmbiguousMatch={liveMatch.isAmbiguous}
             salesPeriodText={salesPeriodText}
-            currentCategory={selectedCategory !== 'all' ? selectedCategory : (inspectingResult.category || '')}
+            currentCategory={selectedCategories.length > 0 ? selectedCategories.join(', ') : (inspectingResult.category || '')}
             remainingInCategoryCount={remainingInCategoryCount}
             onDirtyChange={(dirty) => setIsModalDirty(dirty)}
             onClose={handleCloseInspector}
@@ -1838,6 +2092,7 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
           onOpenLabelModal={(p) => setLabelProduct(p)}
           isDarkMode={isDarkMode}
           zIndexClassName="z-[110]"
+          allProducts={products}
         />
       )}
 
@@ -1966,6 +2221,71 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
 
             {/* Drawer Scrollable Content */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
+              {/* Quick Count Mode in Filter Drawer */}
+              <div className="space-y-2 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Zap className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                    <div>
+                      <div className="font-extrabold text-xs text-slate-900 dark:text-white">Quick Count Mode</div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">Auto-count on scan without popup save</div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleQuickCountMode(!isQuickCountMode)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black cursor-pointer transition-all ${
+                      isQuickCountMode ? 'bg-emerald-600 text-white shadow-xs' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    {isQuickCountMode ? 'ENABLED' : 'DISABLED'}
+                  </button>
+                </div>
+
+                {isQuickCountMode && (
+                  <div className="space-y-1 pt-1 border-t border-slate-200/60 dark:border-slate-700/60">
+                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                      Quick Count Filter
+                    </div>
+                    <div className="grid grid-cols-3 gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setQuickCountFilter('all')}
+                        className={`p-1.5 rounded-lg text-center font-bold text-[11px] cursor-pointer ${
+                          quickCountFilter === 'all'
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                        }`}
+                      >
+                        All ({totalCount})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setQuickCountFilter('scanned')}
+                        className={`p-1.5 rounded-lg text-center font-bold text-[11px] cursor-pointer ${
+                          quickCountFilter === 'scanned'
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-emerald-700 dark:text-emerald-400'
+                        }`}
+                      >
+                        Scanned ({quickCountScannedTotal})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setQuickCountFilter('not_scanned')}
+                        className={`p-1.5 rounded-lg text-center font-bold text-[11px] cursor-pointer ${
+                          quickCountFilter === 'not_scanned'
+                            ? 'bg-slate-800 text-white dark:bg-slate-700'
+                            : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                        }`}
+                      >
+                        Pending ({quickCountNotScannedTotal})
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Status Filters */}
               <div className="space-y-1.5">
                 <label className="text-[11px] font-extrabold uppercase text-slate-400 tracking-wider">
@@ -2055,43 +2375,33 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
               </div>
 
               {/* Category and Main Code selectors */}
-              <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+              <div className="space-y-2.5 pt-2 border-t border-slate-200 dark:border-slate-800">
                 <label className="text-[11px] font-extrabold uppercase text-slate-400 tracking-wider">
                   Category & Department
                 </label>
                 <div className="space-y-2">
-                  <div className="relative">
-                    <select
-                      value={selectedCategory}
-                      onChange={(e) => setSelectedCategory(e.target.value)}
-                      className="w-full px-3 py-2.5 rounded-xl border text-xs bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 font-bold min-h-[44px] appearance-none pr-8 cursor-pointer"
-                    >
-                      <option value="all">All Categories ({availableCategories.length})</option>
-                      {availableCategories.map((cat) => (
-                        <option key={cat} value={cat}>
-                          {cat}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="pointer-events-none absolute right-3 top-3.5 text-slate-400 text-xs">▼</div>
-                  </div>
+                  <MultiSelectDropdown
+                    label="Categories"
+                    options={availableCategories}
+                    selectedValues={selectedCategories}
+                    onChange={(vals) => setSelectedCategories(vals)}
+                    placeholder="All Categories"
+                    searchPlaceholder="Search categories..."
+                    isDarkMode={Boolean(isDarkMode)}
+                    badgeColor="indigo"
+                  />
 
                   {availableMainCodes.length > 0 && (
-                    <div className="relative">
-                      <select
-                        value={selectedMainCode}
-                        onChange={(e) => setSelectedMainCode(e.target.value)}
-                        className="w-full px-3 py-2.5 rounded-xl border text-xs bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 font-bold min-h-[44px] appearance-none pr-8 cursor-pointer"
-                      >
-                        <option value="all">All MainCodes</option>
-                        {availableMainCodes.map((mc) => (
-                          <option key={mc} value={mc}>
-                            MainCode: {mc}
-                          </option>
-                        ))}
-                      </select>
-                      <div className="pointer-events-none absolute right-3 top-3.5 text-slate-400 text-xs">▼</div>
-                    </div>
+                    <MultiSelectDropdown
+                      label="Main Codes"
+                      options={availableMainCodes}
+                      selectedValues={selectedMainCodes}
+                      onChange={(vals) => setSelectedMainCodes(vals)}
+                      placeholder="All MainCodes"
+                      searchPlaceholder="Search main codes..."
+                      isDarkMode={Boolean(isDarkMode)}
+                      badgeColor="indigo"
+                    />
                   )}
                 </div>
               </div>
@@ -2148,13 +2458,7 @@ export const FloorAuditRunner: React.FC<FloorAuditRunnerProps> = ({
                 <div className="space-y-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      if (isDailyPurchase) {
-                        exportDailyPurchaseAuditToExcel(session, allResultsList);
-                      } else {
-                        handleExportFocusExcel();
-                      }
-                    }}
+                    onClick={handleExportExcel}
                     className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer min-h-[44px]"
                   >
                     <FileSpreadsheet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />

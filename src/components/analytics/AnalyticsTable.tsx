@@ -326,7 +326,7 @@ export const AnalyticsTable: React.FC<AnalyticsTableProps> = ({
 
   // Bidirectional linked options computation
   const linkedResult = useMemo(() => {
-    return computeLinkedClassificationOptions(
+    return computeLinkedClassificationOptions<Product>(
       products,
       {
         getMainCode: (p) => p.mainCode,
@@ -691,9 +691,39 @@ export const AnalyticsTable: React.FC<AnalyticsTableProps> = ({
     }
     if (colId === 'stock') {
       return (
-        <span className={`font-bold ${p.stock <= 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-800 dark:text-slate-100'}`}>
-          {(p.stock || 0).toLocaleString('en-IN')}
-        </span>
+        <div className="flex flex-col items-end">
+          <div className="flex items-center gap-1">
+            <span
+              className={`font-black ${
+                p.stockVariation
+                  ? 'text-amber-800 dark:text-amber-300'
+                  : p.stock <= 0
+                  ? 'text-rose-600 dark:text-rose-400'
+                  : 'text-slate-800 dark:text-slate-100'
+              }`}
+            >
+              {(p.stock || 0).toLocaleString('en-IN')}
+            </span>
+            {p.stockVariation && (
+              <span
+                className="text-[9px] font-black uppercase px-1 py-0.2 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800"
+                title="Adjusted physical stock"
+              >
+                Var
+              </span>
+            )}
+          </div>
+          {p.stockVariation && p.systemStock !== undefined && (
+            <span className="text-[9px] font-bold text-slate-400 truncate">
+              Sys: {p.systemStock} ({p.stockVariation.adjustment > 0 ? `+${p.stockVariation.adjustment}` : p.stockVariation.adjustment})
+            </span>
+          )}
+          {p.stockVariation?.recountNeeded && (
+            <span className="text-[8px] font-bold text-rose-500 animate-pulse">
+              Recount needed
+            </span>
+          )}
+        </div>
       );
     }
     if (colId === 'salesCount') {
@@ -1169,7 +1199,11 @@ export const AnalyticsTable: React.FC<AnalyticsTableProps> = ({
                   <tr
                     key={p.id}
                     onClick={() => onSelectProduct(p)}
-                    className="hover:bg-indigo-50/60 dark:hover:bg-slate-800/60 transition-colors cursor-pointer"
+                    className={`transition-colors cursor-pointer ${
+                      p.stockVariation
+                        ? 'bg-amber-50/50 dark:bg-amber-950/20 hover:bg-amber-50/90 dark:hover:bg-amber-950/40'
+                        : 'hover:bg-indigo-50/60 dark:hover:bg-slate-800/60'
+                    }`}
                   >
                     <td className="p-2 text-center text-[10px] text-slate-400 font-mono">{serialNo}</td>
                     {visibleColumns.map((col) => (

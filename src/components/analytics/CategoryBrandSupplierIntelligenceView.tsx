@@ -182,7 +182,7 @@ export const CategoryBrandSupplierIntelligenceView: React.FC<CategoryBrandSuppli
 
   // Bidirectional linked options computation: MainCode, Category, Brand, Supplier
   const linkedResult = useMemo(() => {
-    return computeLinkedClassificationOptions(
+    return computeLinkedClassificationOptions<Product>(
       products,
       {
         getMainCode: (p) => p.mainCode,

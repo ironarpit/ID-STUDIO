@@ -220,6 +220,53 @@ export const DailyPurchaseCheckModal = forwardRef<AuditCheckFormHandle, DailyPur
   useImperativeHandle(ref, () => ({
     submitValidated: async (advanceToNext: boolean) => {
       return await handleSaveCheck(advanceToNext);
+    },
+    getDraftValues: () => {
+      const now = new Date();
+      const isNotOnFloor = displayedOnFloor === 'no';
+      const isIncorrectBoard = boardCorrect === 'no';
+
+      let newStatus: 'done' | 'flagged' | 'pending' = result.status;
+      let outcome = result.dailyPurchaseOutcome;
+      let outcomeLabel = '';
+
+      if (isReportingIssue && issueReason.trim()) {
+        newStatus = 'flagged';
+        outcome = 'ACTION_REQUIRED';
+        outcomeLabel = `Issue Reported: ${issueReason.trim()}`;
+      } else if (isNotOnFloor && isIncorrectBoard) {
+        newStatus = 'flagged';
+        outcome = 'NOT_ON_FLOOR';
+        outcomeLabel = 'Not On Floor & Board Incorrect';
+      } else if (isNotOnFloor) {
+        newStatus = 'flagged';
+        outcome = 'NOT_ON_FLOOR';
+        outcomeLabel = 'Not On Floor';
+      } else if (isIncorrectBoard) {
+        newStatus = 'flagged';
+        outcome = 'BOARD_INCORRECT';
+        outcomeLabel = 'Board Incorrect / Missing';
+      } else if (displayedOnFloor === 'yes' && boardCorrect === 'yes') {
+        newStatus = 'done';
+        outcome = 'OK';
+        outcomeLabel = 'Audited - On Floor & Price OK';
+      }
+
+      return {
+        isOnFloor: displayedOnFloor,
+        isBoardCorrect: boardCorrect,
+        dailyPurchaseOutcome: outcome,
+        boardStatus: boardCorrect === 'yes' ? 'board_correct' : boardCorrect === 'no' ? 'wrong_price' : boardCorrect === 'not_applicable' ? 'not_applicable' : undefined,
+        locationStatus: displayedOnFloor === 'yes' ? 'on_floor' : displayedOnFloor === 'no' ? 'not_found' : undefined,
+        remarks: remarks.trim() || undefined,
+        remark: remarks.trim() || undefined,
+        checkedBy: activeCheckerName || result.checkedBy || 'Floor Auditor',
+        checkedAt: now.toISOString(),
+        checkedDate: now.toLocaleDateString('en-GB'),
+        checkedTime: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        status: newStatus,
+        issueReason: isReportingIssue ? (issueReason.trim() || outcomeLabel) : (newStatus === 'flagged' ? outcomeLabel : undefined),
+      };
     }
   }));
 

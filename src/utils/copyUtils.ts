@@ -138,7 +138,13 @@ export function formatStandardStockProductsText(
         }
       }
 
-      return `${idx + 1}. ${name} (${code})\nMRP: ${mrpFormatted} | SP: ${spFormatted}\nClosing: ${closing} | Sales: ${sales} | Cover: ${coverStr}`;
+      let closingText = `Closing: ${closing}`;
+      if (p.stockVariation && p.systemStock !== undefined) {
+        const varStr = p.stockVariation.adjustment > 0 ? `+${p.stockVariation.adjustment}` : `${p.stockVariation.adjustment}`;
+        closingText = `Closing: ${closing} | System: ${p.systemStock} | Variation: ${varStr}`;
+      }
+
+      return `${idx + 1}. ${name} (${code})\nMRP: ${mrpFormatted} | SP: ${spFormatted}\n${closingText} | Sales: ${sales} | Cover: ${coverStr}`;
     })
     .join('\n\n');
 
@@ -166,21 +172,26 @@ export function formatStockProductsText(
     const sales = p.salesCount ?? p.salesQty ?? 0;
     const analytics = analyticsMap?.get(p.id);
 
+    const stockStr =
+      p.stockVariation && p.systemStock !== undefined
+        ? `Closing: ${stock} | System: ${p.systemStock} | Variation: ${p.stockVariation.adjustment > 0 ? `+${p.stockVariation.adjustment}` : p.stockVariation.adjustment}`
+        : `Stock: ${stock}`;
+
     if (kpiType === 'low_stock') {
       const cover = analytics?.daysCover !== undefined ? `${analytics.daysCover.toFixed(1)} days` : 'N/A';
-      return `• ${name} (${code})\nStock: ${stock} | Sales: ${sales} | Cover: ${cover}`;
+      return `• ${name} (${code})\n${stockStr} | Sales: ${sales} | Cover: ${cover}`;
     }
     if (kpiType === 'zero_sales') {
-      return `• ${name} (${code})\nMRP: ${mrp} | Stock: ${stock} | Sales: 0`;
+      return `• ${name} (${code})\nMRP: ${mrp} | ${stockStr} | Sales: 0`;
     }
     if (kpiType === 'replenishment') {
       const suggested = analytics ? Math.max(0, Math.ceil(sales * 0.5) - stock) : Math.max(1, sales - stock);
-      return `• ${name} (${code})\nStock: ${stock} | Sales: ${sales} | Suggested Qty: ${suggested > 0 ? suggested : 1}`;
+      return `• ${name} (${code})\n${stockStr} | Sales: ${sales} | Suggested Qty: ${suggested > 0 ? suggested : 1}`;
     }
     if (kpiType === 'out_of_stock') {
-      return `• ${name} (${code})\nMRP: ${mrp} | Sales: ${sales} | Stock: 0`;
+      return `• ${name} (${code})\nMRP: ${mrp} | Sales: ${sales} | ${stockStr}`;
     }
-    return `• ${name} (${code})\nMRP: ${mrp} | Stock: ${stock} | Sales: ${sales}`;
+    return `• ${name} (${code})\nMRP: ${mrp} | ${stockStr} | Sales: ${sales}`;
   });
 
   return header + lines.join('\n\n');

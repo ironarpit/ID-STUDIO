@@ -51,6 +51,7 @@ export const VIEW_TITLES: Record<AnalyticsViewType, string> = {
   non_core_focus_check: 'Non-Core Focus Check',
   focus_flagged_issues: 'Flagged Follow-Up',
   focus_history: 'Check History & Reports',
+  stock_variations: 'Stock Variations',
   near_expiry: 'Near Expiry Hub'
 };
 

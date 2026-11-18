@@ -251,7 +251,7 @@ export const ReplenishmentView: React.FC<ReplenishmentViewProps> = ({
 
   // Bidirectional linked options computation
   const linkedResult = useMemo(() => {
-    return computeLinkedClassificationOptions(
+    return computeLinkedClassificationOptions<ReplenishmentItem>(
       replenishmentData,
       {
         getMainCode: (item) => item.product.mainCode,

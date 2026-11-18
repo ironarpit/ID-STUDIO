@@ -210,7 +210,7 @@ export const ReportsExportCenterView: React.FC<ReportsExportCenterViewProps> = (
 
   // Bidirectional linked options computation
   const linkedResult = useMemo(() => {
-    return computeLinkedClassificationOptions(
+    return computeLinkedClassificationOptions<Product>(
       products,
       {
         getMainCode: (p) => p.mainCode,
