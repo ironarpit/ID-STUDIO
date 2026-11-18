@@ -27,6 +27,7 @@ import { playSuccessBeep, playErrorBeep, triggerVibration } from '../../utils/au
 import { resolveScannedBarcode } from '../../utils/barcodeResolver';
 import { normalizeFocusCode } from '../../utils/focusMatcher';
 import { useModalTransition } from '../../utils/useModalTransition';
+import { ensureCameraPermission, isAndroidNative } from '../../utils/platform';
 
 export interface ExpectedProductInfo {
   name: string;
@@ -293,8 +294,18 @@ export const FloorScanVerifyModal: React.FC<FloorScanVerifyModalProps> = ({
       setScanError(null);
       isProcessingScanRef.current = false;
 
-      const timer = setTimeout(() => {
+      const timer = setTimeout(async () => {
         if (!active) return;
+
+        if (isAndroidNative()) {
+          const perm = await ensureCameraPermission();
+          if (!active) return;
+          if (!perm.granted) {
+            setScanError(perm.errorMessage || 'Camera permission denied. You can enter barcode manually below.');
+            setShowManualInput(true);
+            return;
+          }
+        }
 
         Html5Qrcode.getCameras()
           .then((devices) => {

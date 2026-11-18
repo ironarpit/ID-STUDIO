@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { Product } from '../types';
 import { cleanBarcode } from '../utils/fileParser';
+import { getApiBaseUrl, getApiUrl, isAndroidNative } from '../utils/platform';
 
 interface ExtractedAiProduct {
   id: string;
@@ -147,7 +148,12 @@ export const AiScannerModal: React.FC<AiScannerModalProps> = ({
       }
     } catch (err: any) {
       setIsCameraActive(false);
-      setError('Unable to open camera automatically. Please grant camera permission in browser settings or click "Upload Image File".');
+      const isDenied = err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError';
+      setError(
+        isDenied && isAndroidNative()
+          ? 'Camera permission denied. Please allow Camera access for ID STUDIO in Android Settings > Apps > ID STUDIO > Permissions, or tap "Upload Image File".'
+          : 'Unable to open camera automatically. Please grant camera permission in browser settings or click "Upload Image File".'
+      );
     } finally {
       setIsCameraLoading(false);
     }
@@ -248,6 +254,10 @@ export const AiScannerModal: React.FC<AiScannerModalProps> = ({
       const reader = new FileReader();
       reader.onload = async (e) => {
         try {
+          if (isAndroidNative() && !getApiBaseUrl()) {
+            throw new Error('AI Photo Scanner requires VITE_API_BASE_URL to be configured for the Android build (or an active backend server).');
+          }
+
           const base64Url = e.target?.result as string;
           setImagePreview(base64Url);
           const base64Data = base64Url.split(',')[1];
@@ -255,7 +265,7 @@ export const AiScannerModal: React.FC<AiScannerModalProps> = ({
 
           const customPrompt = "Examine this product photo, packaging, or price tag image. Extract the product details including product name, barcode or SKU if visible, Bansal Code/local code, MRP, cost price, retail price, category, and unit. Provide clean structured JSON.";
 
-          const res = await fetch('/api/gemini/scan-invoice', {
+          const res = await fetch(getApiUrl('/api/gemini/scan-invoice'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
@@ -265,9 +275,18 @@ export const AiScannerModal: React.FC<AiScannerModalProps> = ({
             }),
           });
 
-          const data = await res.json();
-          if (!data.success) {
-            throw new Error(data.message || 'AI failed to analyze photo.');
+          let data: any = null;
+          try {
+            data = await res.json();
+          } catch {
+            if (!res.ok) {
+              throw new Error(`AI service error (HTTP ${res.status}). Check server connection.`);
+            }
+            throw new Error('Unexpected response from AI service.');
+          }
+
+          if (!res.ok || !data?.success) {
+            throw new Error(data?.message || `AI failed to analyze photo (HTTP ${res.status}).`);
           }
 
           if (!data.products || data.products.length === 0) {

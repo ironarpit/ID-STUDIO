@@ -3,6 +3,7 @@ import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { X, Camera, Image, AlertCircle, Scan, CheckCircle2, Volume2, VolumeX, Lightbulb } from 'lucide-react';
 import { playSuccessBeep, playErrorBeep, triggerVibration } from '../utils/audio';
 import { cleanBarcode } from '../utils/fileParser';
+import { ensureCameraPermission, isAndroidNative } from '../utils/platform';
 import { Product } from '../types';
 
 interface BarcodeScannerModalProps {
@@ -147,6 +148,13 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
     if (!element) return;
 
     try {
+      if (isAndroidNative()) {
+        const perm = await ensureCameraPermission();
+        if (!perm.granted) {
+          throw new Error(perm.errorMessage || 'Camera permission denied on Android.');
+        }
+      }
+
       const html5Qrcode = new Html5Qrcode('camera-reader', {
         formatsToSupport: [
           Html5QrcodeSupportedFormats.EAN_13,
