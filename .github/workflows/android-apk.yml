@@ -3,7 +3,7 @@ name: Android Debug APK Build
 on:
   push:
     branches:
-      - app-build
+      - main
   workflow_dispatch:
 
 permissions:
@@ -36,11 +36,10 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
-        with:
-          packages: |
-            platform-tools
-            platforms;android-36
-            build-tools;35.0.0
+
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager "platforms;android-36" "build-tools;35.0.0"
 
       - name: Install dependencies from lockfile
         run: |
