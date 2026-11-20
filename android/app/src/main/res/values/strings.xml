@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ID STUDIO</string>
+    <string name="title_activity_main">ID STUDIO</string>
+    <string name="package_name">com.ironarpit.idstudio</string>
+    <string name="custom_url_scheme">com.ironarpit.idstudio</string>
+</resources>
