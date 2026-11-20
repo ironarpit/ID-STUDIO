@@ -42,7 +42,7 @@ import {
 import { AnalyticsViewType, AppMode, StockReportMeta } from '../types';
 import { RetailDashboardSummary } from '../utils/analytics';
 import { forceAppUpdate } from '../utils/appUpdater';
-import { isAndroidNative } from '../utils/platform';
+import { isAndroidNative, isElectronDesktop } from '../utils/platform';
 import idStudioIcon from '../assets/images/id_studio_icon.png';
 
 interface SidebarProps {
@@ -105,19 +105,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   // PWA Install Prompt State
   const isNativeAndroid = isAndroidNative();
+  const isStandaloneNativeApp = isNativeAndroid || isElectronDesktop();
   const [deferredPrompt, setDeferredPrompt] = useState<any>((window as any).deferredPWAInstallPrompt || null);
-  const [isAppInstalled, setIsAppInstalled] = useState(isNativeAndroid);
+  const [isAppInstalled, setIsAppInstalled] = useState(isStandaloneNativeApp);
   const [showiOSInstructions, setShowiOSInstructions] = useState(false);
   const [isUpdatingApp, setIsUpdatingApp] = useState(false);
 
   const handleUpdateApp = async () => {
-    if (isNativeAndroid) return;
+    if (isStandaloneNativeApp) return;
     setIsUpdatingApp(true);
     await forceAppUpdate();
   };
 
   useEffect(() => {
-    if (isNativeAndroid) {
+    if (isStandaloneNativeApp) {
       setIsAppInstalled(true);
       return;
     }
@@ -148,10 +149,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('appinstalled', handleAppInstalled);
     };
-  }, [isNativeAndroid]);
+  }, [isStandaloneNativeApp]);
 
   const handleInstallClick = async () => {
-    if (isNativeAndroid) return;
+    if (isStandaloneNativeApp) return;
     const promptEvent = deferredPrompt || (window as any).deferredPWAInstallPrompt;
     if (promptEvent) {
       promptEvent.prompt();
@@ -585,7 +586,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="flex items-center justify-between gap-1 pt-0.5">
             {(!isCollapsed || isMobileOpen) ? (
               <>
-                {!isNativeAndroid && (
+                {!isStandaloneNativeApp && (
                   <button
                     onClick={handleUpdateApp}
                     disabled={isUpdatingApp}
@@ -609,7 +610,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   {isDarkMode ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
                 </button>
 
-                {!isNativeAndroid && (
+                {!isStandaloneNativeApp && (
                   <button
                     onClick={handleInstallClick}
                     className={`p-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
@@ -631,7 +632,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </>
             ) : (
               <div className="w-full flex flex-col items-center gap-1">
-                {!isNativeAndroid && (
+                {!isStandaloneNativeApp && (
                   <button
                     onClick={handleUpdateApp}
                     disabled={isUpdatingApp}
@@ -668,7 +669,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </aside>
 
       {/* PWA Modal (Web/Browser only) */}
-      {!isNativeAndroid && showiOSInstructions && (
+      {!isStandaloneNativeApp && showiOSInstructions && (
         <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-55 flex items-center justify-center p-4">
           <div className={`p-5 sm:p-6 rounded-2xl max-w-sm w-full border shadow-xl space-y-4 relative ${
             isDarkMode ? 'bg-slate-900 border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-800'

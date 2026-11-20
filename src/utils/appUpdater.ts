@@ -1,4 +1,4 @@
-import { isAndroidNative } from './platform';
+import { isAndroidNative, isElectronDesktop } from './platform';
 
 /**
  * Utility to force-refresh application bundles and clear asset caches
@@ -6,7 +6,7 @@ import { isAndroidNative } from './platform';
  * (all user uploaded Stock IQ, Focus, Near Expiry, and Barcode data remain 100% safe).
  */
 export async function forceAppUpdate(): Promise<void> {
-  if (isAndroidNative()) {
+  if (isAndroidNative() || isElectronDesktop()) {
     return;
   }
 

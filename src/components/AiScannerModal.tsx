@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { Product } from '../types';
 import { cleanBarcode } from '../utils/fileParser';
-import { getApiBaseUrl, getApiUrl, isAndroidNative } from '../utils/platform';
+import { getApiBaseUrl, getApiUrl, isAndroidNative, isElectronDesktop } from '../utils/platform';
 
 interface ExtractedAiProduct {
   id: string;
@@ -152,6 +152,8 @@ export const AiScannerModal: React.FC<AiScannerModalProps> = ({
       setError(
         isDenied && isAndroidNative()
           ? 'Camera permission denied. Please allow Camera access for ID STUDIO in Android Settings > Apps > ID STUDIO > Permissions, or tap "Upload Image File".'
+          : isDenied && isElectronDesktop()
+          ? 'Camera permission denied. Please allow Camera access for desktop apps in Windows Settings > Privacy & security > Camera, or click "Upload Image File".'
           : 'Unable to open camera automatically. Please grant camera permission in browser settings or click "Upload Image File".'
       );
     } finally {
@@ -256,6 +258,9 @@ export const AiScannerModal: React.FC<AiScannerModalProps> = ({
         try {
           if (isAndroidNative() && !getApiBaseUrl()) {
             throw new Error('AI Photo Scanner requires VITE_API_BASE_URL to be configured for the Android build (or an active backend server).');
+          }
+          if (isElectronDesktop() && !getApiBaseUrl()) {
+            throw new Error('AI Photo Scanner requires an active server connection. Please connect to a hosted server or use barcode/manual search offline.');
           }
 
           const base64Url = e.target?.result as string;

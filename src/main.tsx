@@ -46,10 +46,10 @@ if (typeof window !== 'undefined') {
 
 import App from './App.tsx';
 import './index.css';
-import { isAndroidNative } from './utils/platform';
+import { isAndroidNative, isElectronDesktop } from './utils/platform';
 
-// Register Service Worker for Instant PWA Web App Installation across web browsers (disabled in native Android Capacitor)
-if (typeof window !== 'undefined' && 'serviceWorker' in navigator && !isAndroidNative()) {
+// Register Service Worker for Instant PWA Web App Installation across web browsers (disabled in native Android Capacitor and Electron desktop)
+if (typeof window !== 'undefined' && 'serviceWorker' in navigator && !isAndroidNative() && !isElectronDesktop()) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch((err) => {
       console.warn('Service Worker registration skipped:', err);

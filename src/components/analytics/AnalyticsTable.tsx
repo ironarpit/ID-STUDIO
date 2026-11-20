@@ -529,9 +529,6 @@ export const AnalyticsTable: React.FC<AnalyticsTableProps> = ({
 
   // HTML Print Report
   const handlePrint = () => {
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-
     const headersHtml = visibleColumns
       .map(
         (col) =>

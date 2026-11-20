@@ -1,6 +1,26 @@
 import { Capacitor } from '@capacitor/core';
 
-export type AppPlatform = 'android' | 'ios' | 'web';
+export type AppPlatform = 'android' | 'ios' | 'electron' | 'web';
+
+declare global {
+  interface Window {
+    electronAPI?: {
+      isElectron?: boolean;
+      platform?: string;
+    };
+  }
+}
+
+/**
+ * Returns true when running inside the Electron desktop shell via the preload bridge.
+ */
+export function isElectronDesktop(): boolean {
+  try {
+    return typeof window !== 'undefined' && window.electronAPI?.isElectron === true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Returns true when running inside a native Capacitor container (Android or iOS).
@@ -39,7 +59,7 @@ export function isIOSNative(): boolean {
  * Returns true when running in a standard desktop/mobile web browser or PWA.
  */
 export function isWebBrowser(): boolean {
-  return !isCapacitorNative();
+  return !isCapacitorNative() && !isElectronDesktop();
 }
 
 export function getAppPlatform(): AppPlatform {
@@ -47,8 +67,9 @@ export function getAppPlatform(): AppPlatform {
     const p = Capacitor.getPlatform();
     if (p === 'android' || p === 'ios') return p;
   } catch {
-    // Fallback to web
+    // Fallback check
   }
+  if (isElectronDesktop()) return 'electron';
   return 'web';
 }
 

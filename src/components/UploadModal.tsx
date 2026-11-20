@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { parseStockReportFile, convertRowsToProducts, cleanBarcode } from '../utils/fileParser';
 import { ColumnMapping, Product, StockReportMeta, UploadProgressData } from '../types';
-import { getApiBaseUrl, getApiUrl, isAndroidNative } from '../utils/platform';
+import { getApiBaseUrl, getApiUrl, isAndroidNative, isElectronDesktop } from '../utils/platform';
 import { 
   UploadModalShell, 
   UploadDropZone, 
@@ -144,6 +144,9 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         try {
           if (isAndroidNative() && !getApiBaseUrl()) {
             throw new Error('AI image scanning requires VITE_API_BASE_URL to be configured for the Android build. Please upload CSV/Excel offline instead.');
+          }
+          if (isElectronDesktop() && !getApiBaseUrl()) {
+            throw new Error('AI invoice scanning requires an active server connection. Please connect to a hosted server or upload Excel/CSV files offline instead.');
           }
 
           const base64Url = e.target?.result as string;

@@ -13,7 +13,7 @@ import {
 import { AppMode, StockReportMeta, AnalyticsViewType } from '../types';
 import { StoreInfo } from '../utils/api';
 import { forceAppUpdate } from '../utils/appUpdater';
-import { isAndroidNative } from '../utils/platform';
+import { isAndroidNative, isElectronDesktop } from '../utils/platform';
 import idStudioIcon from '../assets/images/id_studio_icon.png';
 
 interface HeaderProps {
@@ -53,9 +53,10 @@ export const Header: React.FC<HeaderProps> = ({
   const [isUpdatingApp, setIsUpdatingApp] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const isNativeAndroid = isAndroidNative();
+  const isStandaloneNativeApp = isNativeAndroid || isElectronDesktop();
 
   const handleUpdateApp = async () => {
-    if (isNativeAndroid) return;
+    if (isStandaloneNativeApp) return;
     setIsUpdatingApp(true);
     await forceAppUpdate();
   };
@@ -128,7 +129,7 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Desktop Right Utilities (Hidden on mobile) */}
           <div className="hidden md:flex items-center gap-1.5 shrink-0">
             {/* Force Update App Button (Hard Refresh without data loss - Web/PWA only) */}
-            {!isNativeAndroid && (
+            {!isStandaloneNativeApp && (
               <button
                 onClick={handleUpdateApp}
                 disabled={isUpdatingApp}
@@ -180,7 +181,7 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Mobile 3-Dot Floating Dropdown */}
             {isMobileMenuOpen && (
               <div className="absolute right-0 top-full mt-1 w-52 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl py-1.5 z-50 text-xs font-medium space-y-0.5 animate-in fade-in zoom-in-95 duration-100">
-                {!isNativeAndroid && (
+                {!isStandaloneNativeApp && (
                   <button
                     onClick={() => {
                       setIsMobileMenuOpen(false);

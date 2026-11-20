@@ -1,0 +1,66 @@
+name: Windows Desktop Installer Build
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-installer:
+    name: Build Windows NSIS Installer (.exe)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies from lockfile
+        run: bun install --frozen-lockfile
+
+      - name: TypeScript check
+        run: npm run lint
+
+      - name: Build web frontend bundle
+        run: npm run build:web
+
+      - name: Build Electron main and preload
+        run: npm run build:electron
+
+      - name: Package Windows NSIS installer
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder --config electron-builder.yml --win nsis --x64
+
+      - name: Verify installer executable exists
+        shell: pwsh
+        run: |
+          $exeFiles = Get-ChildItem -Path "release" -Filter "*.exe" -File -ErrorAction SilentlyContinue
+          if (-not $exeFiles -or $exeFiles.Count -eq 0) {
+            Write-Error "No Windows installer (.exe) was generated in release/."
+            exit 1
+          }
+          $exeFiles | ForEach-Object {
+            Write-Host "Generated installer: $($_.FullName) ($($_.Length) bytes)"
+          }
+
+      - name: Upload Windows Installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ID-STUDIO-Windows-Installer
+          path: release/*.exe
+          if-no-files-found: error
+          retention-days: 30
